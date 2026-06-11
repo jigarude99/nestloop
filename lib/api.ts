@@ -52,6 +52,7 @@ export type ScheduleSlot = {
   id: string;
   day: number;
   personId: string;
+  createdBy: string;
   start: string;
   end: string;
   label: string;
@@ -442,7 +443,7 @@ export async function fetchSlots(householdId: string): Promise<ScheduleSlot[]> {
   const supabase = getSupabase();
   const { data, error } = await supabase
     .from("schedule_slots")
-    .select("id,profile_id,day_of_week,starts_at,ends_at,label")
+    .select("id,profile_id,created_by,day_of_week,starts_at,ends_at,label")
     .eq("household_id", householdId)
     .order("starts_at", { ascending: true });
 
@@ -452,18 +453,20 @@ export async function fetchSlots(householdId: string): Promise<ScheduleSlot[]> {
     id: row.id,
     day: row.day_of_week,
     personId: row.profile_id,
+    createdBy: row.created_by,
     start: (row.starts_at ?? "").slice(0, 5),
     end: (row.ends_at ?? "").slice(0, 5),
     label: row.label ?? "Lavadora"
   }));
 }
 
-export async function createSlot(householdId: string, input: NewSlotInput): Promise<void> {
+export async function createSlot(householdId: string, currentUserId: string, input: NewSlotInput): Promise<void> {
   const supabase = getSupabase();
   const { error } = await supabase.from("schedule_slots").insert({
     id: newId(),
     household_id: householdId,
     profile_id: input.personId,
+    created_by: currentUserId,
     day_of_week: input.day,
     starts_at: input.start,
     ends_at: input.end,
@@ -483,13 +486,15 @@ export async function updateSlot(slotId: string, input: NewSlotInput): Promise<v
       ends_at: input.end,
       label: input.label?.trim() || "Lavadora"
     })
-    .eq("id", slotId);
+    .eq("id", slotId)
+    .select("id")
+    .single();
   if (error) throw error;
 }
 
 export async function deleteSlot(slotId: string): Promise<void> {
   const supabase = getSupabase();
-  const { error } = await supabase.from("schedule_slots").delete().eq("id", slotId);
+  const { error } = await supabase.from("schedule_slots").delete().eq("id", slotId).select("id").single();
   if (error) throw error;
 }
 

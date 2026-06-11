@@ -78,12 +78,17 @@ create table public.schedule_slots (
   id uuid primary key default gen_random_uuid(),
   household_id uuid not null references public.households(id) on delete cascade,
   profile_id uuid not null references public.profiles(id),
+  created_by uuid not null references public.profiles(id),
   day_of_week integer not null check (day_of_week between 0 and 6),
   starts_at time not null,
   ends_at time not null,
   label text not null,
   created_at timestamptz not null default now()
 );
+
+create index schedule_slots_household_id_idx on public.schedule_slots(household_id);
+create index schedule_slots_profile_id_idx on public.schedule_slots(profile_id);
+create index schedule_slots_created_by_idx on public.schedule_slots(created_by);
 
 grant usage on schema public to anon, authenticated;
 
@@ -118,6 +123,27 @@ as $$
   );
 $$;
 
+revoke execute on function public.is_household_member_profile(uuid, uuid)
+  from public, anon;
+grant execute on function public.is_household_member_profile(uuid, uuid)
+  to authenticated;
+
+create or replace function public.is_household_admin(target_household_id uuid)
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select exists (
+    select 1
+    from public.household_members hm
+    where hm.household_id = target_household_id
+      and hm.profile_id = auth.uid()
+      and hm.role = 'admin'
+  );
+$$;
+
 create or replace function public.can_read_expense(target_expense_id uuid)
 returns boolean
 language sql
@@ -130,6 +156,21 @@ as $$
     from public.expenses e
     where e.id = target_expense_id
       and public.is_household_member(e.household_id)
+  );
+$$;
+
+create or replace function public.is_household_member_profile(target_household_id uuid, target_profile_id uuid)
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select exists (
+    select 1
+    from public.household_members hm
+    where hm.household_id = target_household_id
+      and hm.profile_id = target_profile_id
   );
 $$;
 
@@ -176,4 +217,35 @@ using (
     select 1 from public.expenses e
     where e.id = expense_id and e.paid_by = auth.uid()
   )
+);
+
+create policy "members can read schedule slots"
+on public.schedule_slots for select
+using (public.is_household_member(household_id));
+
+create policy "members can create own schedule slots"
+on public.schedule_slots for insert
+with check (
+  public.is_household_member(household_id)
+  and created_by = (select auth.uid())
+  and public.is_household_member_profile(household_id, profile_id)
+);
+
+create policy "admins and creators can update schedule slots"
+on public.schedule_slots for update
+using (
+  public.is_household_member(household_id)
+  and (public.is_household_admin(household_id) or created_by = (select auth.uid()))
+)
+with check (
+  public.is_household_member(household_id)
+  and public.is_household_member_profile(household_id, profile_id)
+  and (public.is_household_admin(household_id) or created_by = (select auth.uid()))
+);
+
+create policy "admins and creators can delete schedule slots"
+on public.schedule_slots for delete
+using (
+  public.is_household_member(household_id)
+  and (public.is_household_admin(household_id) or created_by = (select auth.uid()))
 );

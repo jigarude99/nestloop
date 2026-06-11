@@ -1512,6 +1512,7 @@ function CalendarView({
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<ScheduleSlot | null>(null);
   const [actionsSlot, setActionsSlot] = useState<ScheduleSlot | null>(null);
+  const canManageSlot = (slot: ScheduleSlot) => currentUser.role === "admin" || slot.createdBy === currentUser.id;
 
   return (
     <section className="view-stack">
@@ -1535,19 +1536,23 @@ function CalendarView({
               {daySlots.length ? (
                 daySlots.map((slot) => {
                   const person = getPerson(slot.personId);
+                  const canManage = canManageSlot(slot);
                   return (
                     <button
-                      className="slot-pill"
+                      className={`slot-pill ${canManage ? "" : "readonly"}`}
                       key={slot.id}
                       type="button"
-                      onClick={() => setActionsSlot(slot)}
+                      onClick={canManage ? () => setActionsSlot(slot) : undefined}
+                      disabled={!canManage}
+                      aria-label={`${person.shortName}, ${slot.label}, de ${displayTime(slot.start)} a ${displayTime(slot.end)}`}
                       style={{ "--slot-color": person.color, "--slot-tint": person.tint } as CSSProperties}
                     >
                       <Avatar person={person} size="sm" />
                       <span>
                         <strong>{person.shortName}</strong>
-                        <small>
-                          {slot.label} · {displayTime(slot.start)}–{displayTime(slot.end)}
+                        <small className="slot-label">{slot.label}</small>
+                        <small className="slot-time">
+                          {displayTime(slot.start)} - {displayTime(slot.end)}
                         </small>
                       </span>
                     </button>
@@ -1903,7 +1908,7 @@ export function NestLoopApp({
     await reloadRotations();
   }
   async function handleCreateSlot(input: NewSlotInput) {
-    await apiCreateSlot(hid, input);
+    await apiCreateSlot(hid, currentUserId, input);
     await reloadSlots();
   }
   async function handleUpdateSlot(id: string, input: NewSlotInput) {
