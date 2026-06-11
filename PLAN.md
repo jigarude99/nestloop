@@ -99,7 +99,15 @@ Aplicar una migración (vía MCP `apply_migration` directamente) que incluya:
 
 </details>
 
-### Fase 8 — Autenticación y familia
+### Fase 8 — Autenticación y familia ✅ COMPLETADA (2026-06-11)
+
+Implementada con auth client-side (`@supabase/supabase-js`, sesión persistida en localStorage). Archivos nuevos: `lib/supabase.ts` (cliente singleton), `lib/household.ts` (tipos + mapeo a `Person`), `components/AuthProvider.tsx` (contexto: sesión/perfil/casa/miembros + acciones), `components/AuthScreen.tsx` (login/registro), `components/HouseholdSetup.tsx` (crear/unirse), `components/AuthGate.tsx` (orquesta loading/signed-out/no-household/ready). `components/NestLoopApp.tsx` reescrito: recibe personas + usuario reales (sin switcher demo; barra superior con usuario, código de invitación y cerrar sesión), datos por casa en localStorage (vacíos), y **toda la UI traducida al español**.
+
+- **Build OK** (compila + TypeScript). **Validado E2E contra Supabase real**: login → trigger crea perfil → `create_household` → lecturas anidadas correctas; datos de prueba limpiados. **Verificado visualmente** (login desktop + móvil).
+- Onboarding usado: **código de invitación** (el admin crea la casa y comparte el código de 6 caracteres; cada quien se registra y elige "Unirme con código"). Crear cuentas por el admin (admin API) se deja fuera por requerir service_role.
+- ⚠️ **PENDIENTE MANUAL (1 clic):** la confirmación de correo está ACTIVADA en Supabase. Para onboarding sin fricción, desactivarla en Dashboard → Authentication → Sign In/Providers → Email → apagar "Confirm email". El código maneja ambos casos.
+
+<details><summary>Plan original de la Fase 8 (referencia)</summary>
 
 1. Activar email+password en Supabase Auth (desactivar confirmación por email si complica, o usar cuentas pre-creadas por el admin).
 2. Pantalla de login en español, ultra simple: campos grandes, un botón, mensajes de error claros y amables.
@@ -108,6 +116,8 @@ Aplicar una migración (vía MCP `apply_migration` directamente) que incluya:
 5. El switcher de "persona actual" del demo se reemplaza por el usuario autenticado real.
 
 **Criterio de aceptación**: dos usuarios distintos en dos navegadores ven el mismo household con sus respectivas identidades.
+
+</details>
 
 ### Fase 9 — Conectar datos reales, módulo por módulo (commit y prueba por módulo)
 

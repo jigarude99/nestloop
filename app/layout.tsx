@@ -3,7 +3,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "NestLoop",
-  description: "A warm home hub for shared expenses, turns, chores, and payment proofs.",
+  description: "El hogar organizado: gastos compartidos, turnos, tareas y comprobantes de pago.",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
@@ -29,7 +29,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="es">
       <body>{children}</body>
     </html>
   );

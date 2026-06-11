@@ -1228,3 +1228,221 @@ textarea:focus {
     width: 100%;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   Autenticación / armado de la casa (Fase 8)
+--------------------------------------------------------------------------- */
+.auth-screen {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 24px;
+  background:
+    radial-gradient(circle at 15% 10%, rgba(15, 159, 122, 0.12), transparent 40%),
+    radial-gradient(circle at 85% 90%, rgba(246, 198, 79, 0.16), transparent 45%),
+    var(--bg);
+}
+
+.auth-card {
+  width: min(440px, 100%);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  padding: 26px 24px;
+}
+
+.auth-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.auth-brand strong {
+  display: block;
+  font-size: 18px;
+}
+
+.auth-brand span:not(.brand-mark) {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.auth-title {
+  margin: 0 0 6px;
+  font-size: 24px;
+}
+
+.auth-sub {
+  margin: 0 0 20px;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.auth-form {
+  display: grid;
+  gap: 14px;
+}
+
+.auth-form .primary-action {
+  min-height: 52px;
+  margin-top: 4px;
+}
+
+.auth-alert {
+  border-radius: var(--radius);
+  padding: 11px 13px;
+  font-size: 13.5px;
+  font-weight: 700;
+}
+
+.auth-alert.error {
+  border: 1px solid var(--coral-soft);
+  background: var(--coral-soft);
+  color: #a3372a;
+}
+
+.auth-alert.info {
+  border: 1px solid var(--mint-soft);
+  background: var(--mint-soft);
+  color: #075f49;
+}
+
+.auth-switch {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 18px;
+  color: var(--muted);
+  font-size: 13.5px;
+}
+
+.auth-switch button {
+  border: 0;
+  background: transparent;
+  color: var(--mint);
+  font-weight: 850;
+  padding: 0;
+  text-decoration: underline;
+}
+
+.auth-signout {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  justify-content: center;
+  margin-top: 18px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 700;
+  font-size: 13.5px;
+}
+
+.setup-toggle {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-bottom: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--soft);
+  padding: 5px;
+}
+
+.setup-toggle button {
+  min-height: 44px;
+  border: 0;
+  border-radius: calc(var(--radius) - 2px);
+  background: transparent;
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.setup-toggle button.active {
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 2px 8px rgba(23, 32, 27, 0.08);
+}
+
+.loading-mark {
+  display: grid;
+  width: 60px;
+  height: 60px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  color: var(--mint);
+  animation: nl-spin 1s linear infinite;
+}
+
+@keyframes nl-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Barra superior real */
+.top-greeting strong {
+  display: block;
+  font-size: 18px;
+}
+
+.code-pill {
+  display: inline-flex;
+  min-height: 40px;
+  align-items: center;
+  gap: 7px;
+  border: 1px dashed var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink);
+  padding: 0 14px;
+  font-weight: 850;
+  letter-spacing: 0.12em;
+}
+
+.code-pill:hover {
+  border-color: var(--ink);
+}
+
+/* Panel de invitación (vista Personas) */
+.invite-help {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.invite-code {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  align-self: flex-start;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  padding: 14px 18px;
+}
+
+.invite-code span {
+  font-size: 26px;
+  font-weight: 900;
+  letter-spacing: 0.22em;
+}
+
+.invite-code small {
+  color: var(--muted);
+  font-weight: 700;
+}
+
+@media (max-width: 1100px) {
+  .top-greeting {
+    display: none;
+  }
+}

@@ -1,8 +1,6 @@
 "use client";
 
 import {
-  AlertCircle,
-  ArrowRight,
   BadgeCheck,
   CalendarDays,
   Camera,
@@ -16,37 +14,36 @@ import {
   Droplets,
   HandCoins,
   Home,
+  KeyRound,
+  LogOut,
   LucideIcon,
   Plus,
   ReceiptText,
   RotateCcw,
   RotateCw,
   ShieldCheck,
-  Smartphone,
   Sparkles,
   Upload,
   Users,
   WalletCards,
-  WashingMachine,
   X
 } from "lucide-react";
-import { CSSProperties, FormEvent, useEffect, useMemo, useState } from "react";
+import {
+  createContext,
+  CSSProperties,
+  FormEvent,
+  useContext,
+  useEffect,
+  useMemo,
+  useState
+} from "react";
 import { hasSupabaseConfig } from "../lib/supabase";
+import { Household, Person } from "../lib/household";
 
 type View = "home" | "expenses" | "tasks" | "calendar" | "people";
 type SplitMode = "equal" | "custom";
 type PaymentStatus = "pending" | "sent" | "confirmed" | "rejected";
 type PaymentMethod = "transfer" | "cash" | "other";
-
-type Person = {
-  id: string;
-  name: string;
-  shortName: string;
-  initials: string;
-  role: "admin" | "member";
-  color: string;
-  tint: string;
-};
 
 type ExpenseShare = {
   personId: string;
@@ -103,162 +100,47 @@ type NavItem = {
   icon: LucideIcon;
 };
 
-const PEOPLE: Person[] = [
-  {
-    id: "you",
-    name: "You",
-    shortName: "You",
-    initials: "YO",
-    role: "admin",
-    color: "#0f9f7a",
-    tint: "#dff8ef"
-  },
-  {
-    id: "mom",
-    name: "Mom",
-    shortName: "Mom",
-    initials: "MO",
-    role: "member",
-    color: "#f26d5b",
-    tint: "#ffe7e1"
-  },
-  {
-    id: "adriana",
-    name: "Adriana",
-    shortName: "Adri",
-    initials: "AD",
-    role: "member",
-    color: "#4a90e2",
-    tint: "#e4f0ff"
-  },
-  {
-    id: "isabela",
-    name: "Isabela",
-    shortName: "Isa",
-    initials: "IS",
-    role: "member",
-    color: "#f6c64f",
-    tint: "#fff4cf"
-  },
-  {
-    id: "sister",
-    name: "Sister",
-    shortName: "Sis",
-    initials: "SI",
-    role: "member",
-    color: "#8f79ff",
-    tint: "#eeeaff"
-  }
-];
-
 const NAV_ITEMS: NavItem[] = [
-  { view: "home", label: "Home", icon: Home },
-  { view: "expenses", label: "Bills", icon: ReceiptText },
-  { view: "tasks", label: "Turns", icon: RotateCw },
-  { view: "calendar", label: "Laundry", icon: CalendarDays },
-  { view: "people", label: "People", icon: Users }
+  { view: "home", label: "Inicio", icon: Home },
+  { view: "expenses", label: "Gastos", icon: ReceiptText },
+  { view: "tasks", label: "Turnos", icon: RotateCw },
+  { view: "calendar", label: "Lavadora", icon: CalendarDays },
+  { view: "people", label: "Personas", icon: Users }
 ];
 
-const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-const CATEGORIES = ["Groceries", "Water", "House", "Cleaning", "Other"];
+const DAYS = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
+const CATEGORIES = ["Comida", "Agua", "Casa", "Limpieza", "Otro"];
 
-const DEMO_EXPENSES: Expense[] = [
-  {
-    id: "exp-walmart",
-    title: "Walmart groceries",
-    merchant: "Walmart",
-    category: "Groceries",
-    amount: 92.4,
-    paidBy: "you",
-    purchasedAt: "2026-06-09",
-    createdAt: "2026-06-09T20:20:00.000Z",
-    note: "Food and shared kitchen basics.",
-    receiptName: "walmart-receipt.jpg",
-    shares: [
-      { personId: "you", amount: 18.48, status: "confirmed", confirmedAt: "2026-06-09T20:20:00.000Z" },
-      { personId: "mom", amount: 18.48, status: "sent", paymentMethod: "cash", sentAt: "2026-06-10T18:00:00.000Z" },
-      { personId: "adriana", amount: 18.48, status: "pending" },
-      { personId: "isabela", amount: 18.48, status: "confirmed", paymentMethod: "transfer", proofName: "zelle.png" },
-      { personId: "sister", amount: 18.48, status: "pending" }
-    ]
-  },
-  {
-    id: "exp-water",
-    title: "Water gallons",
-    merchant: "Water shop",
-    category: "Water",
-    amount: 28,
-    paidBy: "adriana",
-    purchasedAt: "2026-06-08",
-    createdAt: "2026-06-08T16:10:00.000Z",
-    note: "Two bottles for the week.",
-    receiptName: "water-ticket.jpg",
-    shares: [
-      { personId: "you", amount: 7, status: "pending" },
-      { personId: "mom", amount: 7, status: "confirmed", paymentMethod: "cash" },
-      { personId: "adriana", amount: 7, status: "confirmed" },
-      { personId: "isabela", amount: 7, status: "pending" }
-    ]
-  },
-  {
-    id: "exp-cleaning",
-    title: "Laundry detergent",
-    merchant: "Target",
-    category: "Cleaning",
-    amount: 36.75,
-    paidBy: "mom",
-    purchasedAt: "2026-06-07",
-    createdAt: "2026-06-07T14:00:00.000Z",
-    note: "Detergent and softener.",
-    shares: [
-      { personId: "you", amount: 12.25, status: "confirmed", paymentMethod: "transfer", proofName: "cashapp.png" },
-      { personId: "mom", amount: 12.25, status: "confirmed" },
-      { personId: "sister", amount: 12.25, status: "rejected", paymentMethod: "transfer", proofName: "wrong-shot.png" }
-    ]
-  }
-];
+// ---------------------------------------------------------------------------
+// Contexto de datos de la casa (personas reales + usuario actual)
+// ---------------------------------------------------------------------------
+type AppData = {
+  people: Person[];
+  getPerson: (id: string) => Person;
+  currentUserId: string;
+};
 
-const DEMO_ROTATIONS: Rotation[] = [
-  {
-    id: "water-run",
-    title: "Buy drinking water",
-    cadence: "When bottles run low",
-    icon: "water",
-    queue: ["you", "mom", "adriana", "isabela", "sister"],
-    currentIndex: 2,
-    history: [
-      { personId: "mom", completedAt: "2026-06-03T18:00:00.000Z", note: "Bought 2 bottles" },
-      { personId: "you", completedAt: "2026-05-27T19:00:00.000Z", note: "Bought 2 bottles" }
-    ]
-  },
-  {
-    id: "trash",
-    title: "Take out trash",
-    cadence: "Every Sunday night",
-    icon: "trash",
-    queue: ["sister", "you", "adriana", "mom"],
-    currentIndex: 0,
-    history: [{ personId: "isabela", completedAt: "2026-06-02T21:00:00.000Z", note: "Done" }]
-  },
-  {
-    id: "plants",
-    title: "Water balcony plants",
-    cadence: "Twice a week",
-    icon: "plants",
-    queue: ["isabela", "mom", "you"],
-    currentIndex: 0,
-    history: [{ personId: "mom", completedAt: "2026-06-09T08:00:00.000Z", note: "Morning" }]
-  }
-];
+const AppDataContext = createContext<AppData | null>(null);
 
-const DEMO_SLOTS: ScheduleSlot[] = [
-  { id: "slot-mom-mon", day: 0, personId: "mom", start: "6:00 PM", end: "8:00 PM", label: "Laundry" },
-  { id: "slot-you-tue", day: 1, personId: "you", start: "7:00 PM", end: "9:00 PM", label: "Laundry" },
-  { id: "slot-adriana-wed", day: 2, personId: "adriana", start: "6:30 PM", end: "8:30 PM", label: "Laundry" },
-  { id: "slot-isabela-fri", day: 4, personId: "isabela", start: "5:00 PM", end: "7:00 PM", label: "Laundry" },
-  { id: "slot-sister-sat", day: 5, personId: "sister", start: "10:00 AM", end: "12:00 PM", label: "Laundry" }
-];
+function useApp(): AppData {
+  const ctx = useContext(AppDataContext);
+  if (!ctx) throw new Error("useApp debe usarse dentro de NestLoopApp");
+  return ctx;
+}
 
+const PLACEHOLDER: Person = {
+  id: "desconocido",
+  name: "Sin nombre",
+  shortName: "—",
+  initials: "?",
+  role: "member",
+  color: "#9aa6a0",
+  tint: "#9aa6a026"
+};
+
+// ---------------------------------------------------------------------------
+// Utilidades
+// ---------------------------------------------------------------------------
 function uid(prefix: string) {
   const value =
     typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -268,27 +150,26 @@ function uid(prefix: string) {
 }
 
 function money(value: number) {
-  return new Intl.NumberFormat("en-US", {
+  return new Intl.NumberFormat("es", {
     style: "currency",
     currency: "USD"
   }).format(value);
 }
 
 function shortDate(value: string) {
-  return new Intl.DateTimeFormat("en-US", {
+  return new Intl.DateTimeFormat("es", {
     month: "short",
     day: "numeric"
   }).format(new Date(`${value}T12:00:00`));
 }
 
 function relativeDate(value: string) {
-  const date = new Date(value);
-  return new Intl.DateTimeFormat("en-US", {
+  return new Intl.DateTimeFormat("es", {
     month: "short",
     day: "numeric",
     hour: "numeric",
     minute: "2-digit"
-  }).format(date);
+  }).format(new Date(value));
 }
 
 function cents(value: number) {
@@ -308,14 +189,9 @@ function splitEvenly(total: number, count: number) {
   const totalCents = cents(total);
   const base = Math.floor(totalCents / count);
   const remainder = totalCents % count;
-
   return Array.from({ length: count }, (_, index) =>
     fromCents(base + (index < remainder ? 1 : 0))
   );
-}
-
-function getPerson(id: string) {
-  return PEOPLE.find((person) => person.id === id) ?? PEOPLE[0];
 }
 
 function useStoredState<T>(key: string, initialValue: T) {
@@ -325,15 +201,14 @@ function useStoredState<T>(key: string, initialValue: T) {
   useEffect(() => {
     try {
       const stored = window.localStorage.getItem(key);
-      if (stored) {
-        setValue(JSON.parse(stored) as T);
-      }
+      setValue(stored ? (JSON.parse(stored) as T) : initialValue);
     } catch {
       setValue(initialValue);
     } finally {
       setReady(true);
     }
-  }, [initialValue, key]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
 
   useEffect(() => {
     if (!ready) return;
@@ -343,6 +218,9 @@ function useStoredState<T>(key: string, initialValue: T) {
   return [value, setValue] as const;
 }
 
+// ---------------------------------------------------------------------------
+// Piezas visuales reutilizables
+// ---------------------------------------------------------------------------
 function Avatar({ person, size = "md" }: { person: Person; size?: "sm" | "md" | "lg" }) {
   return (
     <span
@@ -357,12 +235,11 @@ function Avatar({ person, size = "md" }: { person: Person; size?: "sm" | "md" | 
 
 function StatusBadge({ status }: { status: PaymentStatus }) {
   const copy: Record<PaymentStatus, string> = {
-    pending: "Pending",
-    sent: "Needs OK",
-    confirmed: "Done",
-    rejected: "Fix"
+    pending: "Pendiente",
+    sent: "Por aprobar",
+    confirmed: "Listo",
+    rejected: "Revisar"
   };
-
   return <span className={`status status-${status}`}>{copy[status]}</span>;
 }
 
@@ -388,14 +265,14 @@ function AppNav({
   setActiveView: (view: View) => void;
 }) {
   return (
-    <nav className="app-nav" aria-label="Main navigation">
+    <nav className="app-nav" aria-label="Navegación principal">
       <div className="brand-lockup">
         <span className="brand-mark">
           <RotateCw size={20} />
         </span>
         <div>
           <strong>NestLoop</strong>
-          <span>Home rhythm</span>
+          <span>Ritmo del hogar</span>
         </div>
       </div>
       <div className="nav-items">
@@ -421,13 +298,28 @@ function AppNav({
 
 function TopBar({
   currentUser,
-  setCurrentUserId,
-  pendingCount
+  household,
+  pendingCount,
+  onSignOut
 }: {
   currentUser: Person;
-  setCurrentUserId: (id: string) => void;
+  household: Household;
   pendingCount: number;
+  onSignOut: () => void;
 }) {
+  const [copied, setCopied] = useState(false);
+
+  async function copyCode() {
+    if (!household.invite_code) return;
+    try {
+      await navigator.clipboard.writeText(household.invite_code);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* ignore */
+    }
+  }
+
   return (
     <header className="top-bar">
       <div className="mobile-brand">
@@ -436,27 +328,31 @@ function TopBar({
         </span>
         <strong>NestLoop</strong>
       </div>
-      <div className="user-switcher" aria-label="Current person">
-        {PEOPLE.map((person) => (
-          <button
-            className={`person-chip ${person.id === currentUser.id ? "active" : ""}`}
-            key={person.id}
-            onClick={() => setCurrentUserId(person.id)}
-            type="button"
-          >
-            <Avatar person={person} size="sm" />
-            <span>{person.shortName}</span>
-          </button>
-        ))}
+      <div className="top-greeting">
+        <p className="eyebrow">{household.name}</p>
+        <strong>Hola, {currentUser.name}</strong>
       </div>
       <div className="top-actions">
         <span className={`sync-pill ${hasSupabaseConfig ? "live" : ""}`}>
           <Database size={15} />
-          {hasSupabaseConfig ? "Cloud ready" : "Demo data"}
+          {hasSupabaseConfig ? "En la nube" : "Local"}
         </span>
-        <span className="notification-pill" aria-label={`${pendingCount} open items`}>
+        {household.invite_code ? (
+          <button className="code-pill" onClick={copyCode} type="button" title="Código para invitar a tu familia">
+            <KeyRound size={14} />
+            {copied ? "¡Copiado!" : household.invite_code}
+          </button>
+        ) : null}
+        <span className="person-chip active">
+          <Avatar person={currentUser} size="sm" />
+          <span>{currentUser.shortName}</span>
+        </span>
+        <span className="notification-pill" aria-label={`${pendingCount} pendientes`}>
           {pendingCount}
         </span>
+        <button className="icon-button" onClick={onSignOut} type="button" aria-label="Cerrar sesión">
+          <LogOut size={18} />
+        </button>
       </div>
     </header>
   );
@@ -500,6 +396,8 @@ function HomeView({
   setActiveView: (view: View) => void;
   setActiveExpenseId: (id: string) => void;
 }) {
+  const { getPerson } = useApp();
+
   const myOpenShares = expenses.flatMap((expense) =>
     expense.shares
       .filter(
@@ -534,34 +432,34 @@ function HomeView({
     <section className="view-stack">
       <div className="hero-panel">
         <div>
-          <p className="eyebrow">Today for {currentUser.name}</p>
-          <h1>Home feels lighter when everyone knows their part.</h1>
+          <p className="eyebrow">Hoy para {currentUser.name}</p>
+          <h1>El hogar se siente mejor cuando cada quien sabe qué le toca.</h1>
         </div>
         <button className="primary-action" onClick={() => setActiveView("expenses")} type="button">
           <ReceiptText size={19} />
-          Add bill
+          Agregar gasto
         </button>
       </div>
 
       <div className="stats-grid">
         <StatCard
-          helper={`${myOpenShares.length} open item${myOpenShares.length === 1 ? "" : "s"}`}
+          helper={`${myOpenShares.length} ${myOpenShares.length === 1 ? "pendiente" : "pendientes"}`}
           icon={WalletCards}
-          label="You owe"
+          label="Debes"
           tone="coral"
           value={money(amountOwed)}
         />
         <StatCard
-          helper="Still waiting"
+          helper="A la espera"
           icon={HandCoins}
-          label="Owed to you"
+          label="Te deben"
           tone="mint"
           value={money(amountIncoming)}
         />
         <StatCard
-          helper={currentTurns.length ? "You are up" : "Nothing urgent"}
+          helper={currentTurns.length ? "Te toca" : "Nada urgente"}
           icon={RotateCw}
-          label="Turns"
+          label="Turnos"
           tone="sun"
           value={currentTurns.length ? String(currentTurns.length) : "0"}
         />
@@ -569,8 +467,8 @@ function HomeView({
 
       <div className="section-heading">
         <div>
-          <p className="eyebrow">Next actions</p>
-          <h2>Clear and close</h2>
+          <p className="eyebrow">Próximas acciones</p>
+          <h2>Resolver y cerrar</h2>
         </div>
       </div>
 
@@ -584,8 +482,8 @@ function HomeView({
           >
             <IconBubble icon={CreditCard} tone="coral" />
             <span>
-              <strong>Pay {money(share.amount)}</strong>
-              <small>{expense.title} to {getPerson(expense.paidBy).name}</small>
+              <strong>Pagar {money(share.amount)}</strong>
+              <small>{expense.title} a {getPerson(expense.paidBy).name}</small>
             </span>
             <ChevronRight size={19} />
           </button>
@@ -600,8 +498,8 @@ function HomeView({
           >
             <IconBubble icon={ShieldCheck} tone="mint" />
             <span>
-              <strong>Confirm {getPerson(share.personId).name}</strong>
-              <small>{expense.title} cash payment</small>
+              <strong>Confirmar a {getPerson(share.personId).name}</strong>
+              <small>{expense.title} · pago en efectivo</small>
             </span>
             <ChevronRight size={19} />
           </button>
@@ -629,48 +527,48 @@ function HomeView({
         {!myOpenShares.length && !needsConfirmation.length && !currentTurns.length ? (
           <div className="empty-state">
             <CheckCircle2 size={28} />
-            <strong>All clear</strong>
-            <span>No open payments or turns right now.</span>
+            <strong>Todo al día</strong>
+            <span>No hay pagos ni turnos pendientes ahora mismo.</span>
           </div>
         ) : null}
       </div>
 
-      <div className="section-heading compact">
-        <div>
-          <p className="eyebrow">House board</p>
-          <h2>At a glance</h2>
-        </div>
-      </div>
-
-      <div className="board-grid">
-        {rotations.slice(0, 3).map((rotation) => {
-          const person = getPerson(rotation.queue[rotation.currentIndex]);
-          const Icon = rotationIcon(rotation.icon);
-          return (
-            <article className="board-card" key={rotation.id}>
-              <IconBubble icon={Icon} tone="sky" />
-              <div>
-                <small>{rotation.title}</small>
-                <strong>{person.name}</strong>
-              </div>
-            </article>
-          );
-        })}
-      </div>
+      {rotations.length ? (
+        <>
+          <div className="section-heading compact">
+            <div>
+              <p className="eyebrow">Tablero de la casa</p>
+              <h2>De un vistazo</h2>
+            </div>
+          </div>
+          <div className="board-grid">
+            {rotations.slice(0, 3).map((rotation) => {
+              const person = getPerson(rotation.queue[rotation.currentIndex]);
+              const Icon = rotationIcon(rotation.icon);
+              return (
+                <article className="board-card" key={rotation.id}>
+                  <IconBubble icon={Icon} tone="sky" />
+                  <div>
+                    <small>{rotation.title}</small>
+                    <strong>{person.name}</strong>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        </>
+      ) : null}
     </section>
   );
 }
 
-function ExpenseCard({
-  expense,
-  onOpen
-}: {
-  expense: Expense;
-  onOpen: (id: string) => void;
-}) {
+function ExpenseCard({ expense, onOpen }: { expense: Expense; onOpen: (id: string) => void }) {
+  const { getPerson } = useApp();
   const paidBy = getPerson(expense.paidBy);
   const confirmed = expense.shares.filter((share) => share.status === "confirmed").length;
-  const progress = Math.round((confirmed / expense.shares.length) * 100);
+  const progress = expense.shares.length
+    ? Math.round((confirmed / expense.shares.length) * 100)
+    : 0;
 
   return (
     <button className="expense-card" onClick={() => onOpen(expense.id)} type="button">
@@ -681,15 +579,15 @@ function ExpenseCard({
         <div>
           <strong>{expense.title}</strong>
           <span>
-            {expense.merchant} • {shortDate(expense.purchasedAt)}
+            {expense.merchant || "Sin tienda"} • {shortDate(expense.purchasedAt)}
           </span>
         </div>
       </div>
       <div className="expense-side">
         <strong>{money(expense.amount)}</strong>
-        <span>paid by {paidBy.shortName}</span>
+        <span>pagó {paidBy.shortName}</span>
       </div>
-      <div className="progress-line" aria-label={`${progress}% confirmed`}>
+      <div className="progress-line" aria-label={`${progress}% confirmado`}>
         <span style={{ width: `${progress}%` }} />
       </div>
       <div className="expense-footer">
@@ -698,7 +596,7 @@ function ExpenseCard({
             <Avatar key={share.personId} person={getPerson(share.personId)} size="sm" />
           ))}
         </div>
-        <span>{confirmed}/{expense.shares.length} done</span>
+        <span>{confirmed}/{expense.shares.length} listos</span>
       </div>
     </button>
   );
@@ -713,23 +611,24 @@ function ExpenseForm({
   onClose: () => void;
   onCreate: (expense: Expense) => void;
 }) {
-  const [title, setTitle] = useState("Shared groceries");
-  const [merchant, setMerchant] = useState("Walmart");
-  const [category, setCategory] = useState("Groceries");
-  const [amount, setAmount] = useState("80.00");
+  const { people } = useApp();
+  const [title, setTitle] = useState("Compra compartida");
+  const [merchant, setMerchant] = useState("");
+  const [category, setCategory] = useState(CATEGORIES[0]);
+  const [amount, setAmount] = useState("");
   const [paidBy, setPaidBy] = useState(currentUser.id);
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [receiptName, setReceiptName] = useState("");
   const [note, setNote] = useState("");
   const [splitMode, setSplitMode] = useState<SplitMode>("equal");
-  const [selected, setSelected] = useState<Record<string, boolean>>(
-    Object.fromEntries(PEOPLE.map((person) => [person.id, true]))
+  const [selected, setSelected] = useState<Record<string, boolean>>(() =>
+    Object.fromEntries(people.map((person) => [person.id, true]))
   );
-  const [customAmounts, setCustomAmounts] = useState<Record<string, string>>(
-    Object.fromEntries(PEOPLE.map((person) => [person.id, ""]))
+  const [customAmounts, setCustomAmounts] = useState<Record<string, string>>(() =>
+    Object.fromEntries(people.map((person) => [person.id, ""]))
   );
 
-  const selectedPeople = PEOPLE.filter((person) => selected[person.id]);
+  const selectedPeople = people.filter((person) => selected[person.id]);
   const total = parseMoney(amount);
   const evenAmounts = selectedPeople.length ? splitEvenly(total, selectedPeople.length) : [];
   const customTotal = selectedPeople.reduce(
@@ -738,7 +637,8 @@ function ExpenseForm({
   );
   const customDifference = total - customTotal;
   const validCustom = splitMode === "equal" || Math.abs(customDifference) < 0.01;
-  const canSubmit = title.trim() && merchant.trim() && total > 0 && selectedPeople.length > 0 && validCustom;
+  const canSubmit =
+    title.trim() && total > 0 && selectedPeople.length > 0 && validCustom;
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -775,37 +675,42 @@ function ExpenseForm({
       <form className="modal-sheet expense-form" onSubmit={submit}>
         <div className="modal-header">
           <div>
-            <p className="eyebrow">New bill</p>
-            <h2>Add a shared expense</h2>
+            <p className="eyebrow">Nuevo gasto</p>
+            <h2>Agrega un gasto compartido</h2>
           </div>
-          <button className="icon-button" onClick={onClose} type="button" aria-label="Close">
+          <button className="icon-button" onClick={onClose} type="button" aria-label="Cerrar">
             <X size={20} />
           </button>
         </div>
 
         <div className="form-grid two">
           <label>
-            <span>Title</span>
+            <span>Título</span>
             <input value={title} onChange={(event) => setTitle(event.target.value)} />
           </label>
           <label>
-            <span>Store</span>
-            <input value={merchant} onChange={(event) => setMerchant(event.target.value)} />
+            <span>Tienda</span>
+            <input
+              placeholder="Ej: Walmart"
+              value={merchant}
+              onChange={(event) => setMerchant(event.target.value)}
+            />
           </label>
           <label>
             <span>Total</span>
             <input
               inputMode="decimal"
+              placeholder="0.00"
               value={amount}
               onChange={(event) => setAmount(event.target.value)}
             />
           </label>
           <label>
-            <span>Date</span>
+            <span>Fecha</span>
             <input type="date" value={date} onChange={(event) => setDate(event.target.value)} />
           </label>
           <label>
-            <span>Category</span>
+            <span>Categoría</span>
             <select value={category} onChange={(event) => setCategory(event.target.value)}>
               {CATEGORIES.map((item) => (
                 <option key={item}>{item}</option>
@@ -813,9 +718,9 @@ function ExpenseForm({
             </select>
           </label>
           <label>
-            <span>Paid by</span>
+            <span>Pagó</span>
             <select value={paidBy} onChange={(event) => setPaidBy(event.target.value)}>
-              {PEOPLE.map((person) => (
+              {people.map((person) => (
                 <option key={person.id} value={person.id}>
                   {person.name}
                 </option>
@@ -826,7 +731,7 @@ function ExpenseForm({
 
         <label className="file-pick">
           <Camera size={19} />
-          <span>{receiptName || "Attach receipt photo"}</span>
+          <span>{receiptName || "Adjuntar foto de la factura"}</span>
           <input
             type="file"
             accept="image/*"
@@ -835,47 +740,44 @@ function ExpenseForm({
         </label>
 
         <label>
-          <span>Note</span>
+          <span>Nota</span>
           <textarea
             value={note}
             onChange={(event) => setNote(event.target.value)}
-            placeholder="Optional"
+            placeholder="Opcional"
             rows={3}
           />
         </label>
 
         <div className="split-toolbar">
-          <span>Split</span>
+          <span>Dividir</span>
           <div className="segmented">
             <button
               className={splitMode === "equal" ? "active" : ""}
               onClick={() => setSplitMode("equal")}
               type="button"
             >
-              Equal
+              Igual
             </button>
             <button
               className={splitMode === "custom" ? "active" : ""}
               onClick={() => setSplitMode("custom")}
               type="button"
             >
-              Custom
+              Personalizado
             </button>
           </div>
         </div>
 
         <div className="people-picker">
-          {PEOPLE.map((person, index) => {
+          {people.map((person, index) => {
             const isSelected = selected[person.id];
             return (
               <div className={`share-row ${isSelected ? "selected" : ""}`} key={person.id}>
                 <button
                   className="check-person"
                   onClick={() =>
-                    setSelected((current) => ({
-                      ...current,
-                      [person.id]: !current[person.id]
-                    }))
+                    setSelected((current) => ({ ...current, [person.id]: !current[person.id] }))
                   }
                   type="button"
                 >
@@ -885,7 +787,7 @@ function ExpenseForm({
                 </button>
                 {splitMode === "custom" ? (
                   <input
-                    aria-label={`${person.name} amount`}
+                    aria-label={`Monto de ${person.name}`}
                     disabled={!isSelected}
                     inputMode="decimal"
                     placeholder="0.00"
@@ -898,7 +800,7 @@ function ExpenseForm({
                     }
                   />
                 ) : (
-                  <strong>{isSelected ? money(evenAmounts[index] ?? 0) : "$0.00"}</strong>
+                  <strong>{isSelected ? money(evenAmounts[selectedPeople.indexOf(person)] ?? 0) : money(0)}</strong>
                 )}
               </div>
             );
@@ -907,13 +809,15 @@ function ExpenseForm({
 
         {splitMode === "custom" ? (
           <div className={`difference-note ${validCustom ? "ok" : ""}`}>
-            {validCustom ? "Custom split matches total." : `${money(Math.abs(customDifference))} left to match.`}
+            {validCustom
+              ? "La división personalizada cuadra con el total."
+              : `Faltan ${money(Math.abs(customDifference))} por cuadrar.`}
           </div>
         ) : null}
 
         <button className="primary-action full" disabled={!canSubmit} type="submit">
           <Plus size={19} />
-          Create bill
+          Crear gasto
         </button>
       </form>
     </div>
@@ -935,6 +839,7 @@ function ExpenseDetail({
   onConfirm: (expenseId: string, personId: string) => void;
   onReject: (expenseId: string, personId: string) => void;
 }) {
+  const { getPerson } = useApp();
   const [method, setMethod] = useState<PaymentMethod>("transfer");
   const [proofName, setProofName] = useState("");
   const payer = getPerson(expense.paidBy);
@@ -950,7 +855,7 @@ function ExpenseDetail({
             <p className="eyebrow">{expense.category}</p>
             <h2>{expense.title}</h2>
           </div>
-          <button className="icon-button" onClick={onClose} type="button" aria-label="Close">
+          <button className="icon-button" onClick={onClose} type="button" aria-label="Cerrar">
             <X size={20} />
           </button>
         </div>
@@ -958,20 +863,20 @@ function ExpenseDetail({
         <div className="detail-hero">
           <div className="receipt-preview">
             <ReceiptText size={28} />
-            <span>{expense.receiptName ?? "No photo yet"}</span>
+            <span>{expense.receiptName ?? "Sin foto"}</span>
           </div>
           <div className="detail-money">
             <span>Total</span>
             <strong>{money(expense.amount)}</strong>
             <small>
-              {expense.merchant} • {shortDate(expense.purchasedAt)}
+              {expense.merchant || "Sin tienda"} • {shortDate(expense.purchasedAt)}
             </small>
           </div>
         </div>
 
         <div className="payer-line">
           <Avatar person={payer} size="sm" />
-          <span>Paid by {payer.name}</span>
+          <span>Pagó {payer.name}</span>
         </div>
 
         <div className="share-list">
@@ -986,7 +891,9 @@ function ExpenseDetail({
                   <Avatar person={person} size="sm" />
                   <span>
                     <strong>{person.name}</strong>
-                    <small>{share.proofName ?? share.paymentMethod ?? "No proof yet"}</small>
+                    <small>
+                      {share.proofName ?? methodLabel(share.paymentMethod) ?? "Sin comprobante"}
+                    </small>
                   </span>
                 </div>
                 <strong>{money(share.amount)}</strong>
@@ -998,14 +905,14 @@ function ExpenseDetail({
                       onClick={() => onConfirm(expense.id, share.personId)}
                       type="button"
                     >
-                      OK
+                      Aceptar
                     </button>
                     <button
                       className="tiny-button"
                       onClick={() => onReject(expense.id, share.personId)}
                       type="button"
                     >
-                      Fix
+                      Rechazar
                     </button>
                   </div>
                 ) : null}
@@ -1017,28 +924,28 @@ function ExpenseDetail({
         {currentShare && currentShare.status !== "confirmed" && expense.paidBy !== currentUser.id ? (
           <div className="payment-box">
             <div className="split-toolbar">
-              <span>Mark payment</span>
+              <span>Marcar pago</span>
               <div className="segmented">
                 <button
                   className={method === "transfer" ? "active" : ""}
                   onClick={() => setMethod("transfer")}
                   type="button"
                 >
-                  Transfer
+                  Transferencia
                 </button>
                 <button
                   className={method === "cash" ? "active" : ""}
                   onClick={() => setMethod("cash")}
                   type="button"
                 >
-                  Cash
+                  Efectivo
                 </button>
               </div>
             </div>
             {method !== "cash" ? (
               <label className="file-pick">
                 <Upload size={18} />
-                <span>{proofName || "Upload screenshot"}</span>
+                <span>{proofName || "Subir captura del pago"}</span>
                 <input
                   type="file"
                   accept="image/*"
@@ -1048,7 +955,7 @@ function ExpenseDetail({
             ) : (
               <div className="cash-note">
                 <HandCoins size={19} />
-                <span>Cash waits for {payer.shortName} to confirm.</span>
+                <span>El efectivo espera que {payer.shortName} lo confirme.</span>
               </div>
             )}
             <button
@@ -1058,18 +965,25 @@ function ExpenseDetail({
               type="button"
             >
               <BadgeCheck size={19} />
-              Mark {money(currentShare.amount)} paid
+              Marcar {money(currentShare.amount)} pagado
             </button>
           </div>
         ) : null}
 
         <div className="timeline-note">
           <Clock3 size={17} />
-          <span>Added {relativeDate(expense.createdAt)}</span>
+          <span>Agregado {relativeDate(expense.createdAt)}</span>
         </div>
       </div>
     </div>
   );
+}
+
+function methodLabel(method?: PaymentMethod) {
+  if (method === "transfer") return "Transferencia";
+  if (method === "cash") return "Efectivo";
+  if (method === "other") return "Otro";
+  return undefined;
 }
 
 function ExpensesView({
@@ -1089,20 +1003,28 @@ function ExpensesView({
     <section className="view-stack">
       <div className="section-heading">
         <div>
-          <p className="eyebrow">Shared bills</p>
-          <h1>Every receipt has a home.</h1>
+          <p className="eyebrow">Gastos compartidos</p>
+          <h1>Cada factura tiene su lugar.</h1>
         </div>
         <button className="primary-action" onClick={() => setShowForm(true)} type="button">
           <Plus size={19} />
-          Add bill
+          Agregar gasto
         </button>
       </div>
 
-      <div className="expense-list">
-        {expenses.map((expense) => (
-          <ExpenseCard expense={expense} key={expense.id} onOpen={setActiveExpenseId} />
-        ))}
-      </div>
+      {expenses.length ? (
+        <div className="expense-list">
+          {expenses.map((expense) => (
+            <ExpenseCard expense={expense} key={expense.id} onOpen={setActiveExpenseId} />
+          ))}
+        </div>
+      ) : (
+        <div className="empty-state">
+          <ReceiptText size={28} />
+          <strong>Aún no hay gastos</strong>
+          <span>Crea el primero con el botón “Agregar gasto”.</span>
+        </div>
+      )}
 
       {showForm ? (
         <ExpenseForm
@@ -1126,6 +1048,7 @@ function RotationCard({
   rotation: Rotation;
   onComplete: (id: string) => void;
 }) {
+  const { getPerson } = useApp();
   const Icon = rotationIcon(rotation.icon);
   const currentPerson = getPerson(rotation.queue[rotation.currentIndex]);
 
@@ -1141,7 +1064,7 @@ function RotationCard({
       <div className="current-turn">
         <Avatar person={currentPerson} size="lg" />
         <div>
-          <span>Up now</span>
+          <span>Le toca</span>
           <strong>{currentPerson.name}</strong>
         </div>
       </div>
@@ -1159,7 +1082,7 @@ function RotationCard({
       </div>
       <button className="secondary-action full" onClick={() => onComplete(rotation.id)} type="button">
         <CheckCircle2 size={19} />
-        Mark done
+        Marcar hecho
       </button>
       <div className="history-list">
         {rotation.history.slice(0, 2).map((event) => (
@@ -1173,26 +1096,141 @@ function RotationCard({
   );
 }
 
+function RotationForm({
+  onClose,
+  onCreate
+}: {
+  onClose: () => void;
+  onCreate: (rotation: Rotation) => void;
+}) {
+  const { people, currentUserId } = useApp();
+  const [title, setTitle] = useState("Comprar agua");
+  const [cadence, setCadence] = useState("Cuando se acaba");
+  const [icon, setIcon] = useState<Rotation["icon"]>("water");
+  const [queue, setQueue] = useState<Record<string, boolean>>(() =>
+    Object.fromEntries(people.map((p) => [p.id, true]))
+  );
+
+  const chosen = people.filter((p) => queue[p.id]);
+
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!title.trim() || chosen.length === 0) return;
+    onCreate({
+      id: uid("rotation"),
+      title: title.trim(),
+      cadence: cadence.trim() || "Por turnos",
+      icon,
+      queue: chosen.map((p) => p.id),
+      currentIndex: 0,
+      history: []
+    });
+  }
+
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <form className="modal-sheet schedule-form" onSubmit={submit}>
+        <div className="modal-header">
+          <div>
+            <p className="eyebrow">Nuevo turno</p>
+            <h2>Crear un turno rotativo</h2>
+          </div>
+          <button className="icon-button" onClick={onClose} type="button" aria-label="Cerrar">
+            <X size={20} />
+          </button>
+        </div>
+        <label>
+          <span>¿Qué hay que hacer?</span>
+          <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Ej: Comprar agua" />
+        </label>
+        <label>
+          <span>¿Cada cuándo?</span>
+          <input value={cadence} onChange={(e) => setCadence(e.target.value)} placeholder="Ej: Cada semana" />
+        </label>
+        <label>
+          <span>Ícono</span>
+          <select value={icon} onChange={(e) => setIcon(e.target.value as Rotation["icon"])}>
+            <option value="water">Agua</option>
+            <option value="trash">Basura</option>
+            <option value="plants">Plantas / otro</option>
+          </select>
+        </label>
+        <div className="people-picker">
+          {people.map((person) => {
+            const on = queue[person.id];
+            return (
+              <div className={`share-row ${on ? "selected" : ""}`} key={person.id}>
+                <button
+                  className="check-person"
+                  type="button"
+                  onClick={() => setQueue((c) => ({ ...c, [person.id]: !c[person.id] }))}
+                >
+                  <Avatar person={person} size="sm" />
+                  <span>{person.name}</span>
+                  {on ? <Check size={18} /> : null}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+        <p className="difference-note ok" style={{ marginTop: 0 }}>
+          El orden de la lista marca quién va primero. Empieza por {chosen[0]?.name ?? "—"}.
+        </p>
+        <button className="primary-action full" type="submit" disabled={!title.trim() || !chosen.length}>
+          <Plus size={19} />
+          Crear turno
+        </button>
+        <input type="hidden" value={currentUserId} readOnly />
+      </form>
+    </div>
+  );
+}
+
 function TasksView({
   rotations,
-  onComplete
+  onComplete,
+  onCreate
 }: {
   rotations: Rotation[];
   onComplete: (id: string) => void;
+  onCreate: (rotation: Rotation) => void;
 }) {
+  const [showForm, setShowForm] = useState(false);
+
   return (
     <section className="view-stack">
       <div className="section-heading">
         <div>
-          <p className="eyebrow">Rotating turns</p>
-          <h1>No whiteboard math.</h1>
+          <p className="eyebrow">Turnos rotativos</p>
+          <h1>Sin cuentas en la pizarra.</h1>
         </div>
+        <button className="primary-action" onClick={() => setShowForm(true)} type="button">
+          <Plus size={19} />
+          Nuevo turno
+        </button>
       </div>
-      <div className="rotation-grid">
-        {rotations.map((rotation) => (
-          <RotationCard key={rotation.id} rotation={rotation} onComplete={onComplete} />
-        ))}
-      </div>
+      {rotations.length ? (
+        <div className="rotation-grid">
+          {rotations.map((rotation) => (
+            <RotationCard key={rotation.id} rotation={rotation} onComplete={onComplete} />
+          ))}
+        </div>
+      ) : (
+        <div className="empty-state">
+          <RotateCw size={28} />
+          <strong>Aún no hay turnos</strong>
+          <span>Crea el del agua para empezar.</span>
+        </div>
+      )}
+      {showForm ? (
+        <RotationForm
+          onClose={() => setShowForm(false)}
+          onCreate={(rotation) => {
+            onCreate(rotation);
+            setShowForm(false);
+          }}
+        />
+      ) : null}
     </section>
   );
 }
@@ -1206,6 +1244,7 @@ function ScheduleForm({
   onClose: () => void;
   onCreate: (slot: ScheduleSlot) => void;
 }) {
+  const { people } = useApp();
   const [personId, setPersonId] = useState(currentUser.id);
   const [day, setDay] = useState("0");
   const [start, setStart] = useState("6:00 PM");
@@ -1219,7 +1258,7 @@ function ScheduleForm({
       personId,
       start,
       end,
-      label: "Laundry"
+      label: "Lavadora"
     });
   }
 
@@ -1228,17 +1267,17 @@ function ScheduleForm({
       <form className="modal-sheet schedule-form" onSubmit={submit}>
         <div className="modal-header">
           <div>
-            <p className="eyebrow">Laundry</p>
-            <h2>Add a slot</h2>
+            <p className="eyebrow">Lavadora</p>
+            <h2>Agregar turno</h2>
           </div>
-          <button className="icon-button" onClick={onClose} type="button" aria-label="Close">
+          <button className="icon-button" onClick={onClose} type="button" aria-label="Cerrar">
             <X size={20} />
           </button>
         </div>
         <label>
-          <span>Person</span>
+          <span>Persona</span>
           <select value={personId} onChange={(event) => setPersonId(event.target.value)}>
-            {PEOPLE.map((person) => (
+            {people.map((person) => (
               <option key={person.id} value={person.id}>
                 {person.name}
               </option>
@@ -1246,7 +1285,7 @@ function ScheduleForm({
           </select>
         </label>
         <label>
-          <span>Day</span>
+          <span>Día</span>
           <select value={day} onChange={(event) => setDay(event.target.value)}>
             {DAYS.map((item, index) => (
               <option key={item} value={index}>
@@ -1257,17 +1296,17 @@ function ScheduleForm({
         </label>
         <div className="form-grid two">
           <label>
-            <span>Start</span>
+            <span>Inicio</span>
             <input value={start} onChange={(event) => setStart(event.target.value)} />
           </label>
           <label>
-            <span>End</span>
+            <span>Fin</span>
             <input value={end} onChange={(event) => setEnd(event.target.value)} />
           </label>
         </div>
         <button className="primary-action full" type="submit">
           <Plus size={19} />
-          Add slot
+          Agregar turno
         </button>
       </form>
     </div>
@@ -1283,18 +1322,19 @@ function CalendarView({
   slots: ScheduleSlot[];
   onCreate: (slot: ScheduleSlot) => void;
 }) {
+  const { getPerson } = useApp();
   const [showForm, setShowForm] = useState(false);
 
   return (
     <section className="view-stack">
       <div className="section-heading">
         <div>
-          <p className="eyebrow">Laundry week</p>
-          <h1>Simple slots, fewer surprises.</h1>
+          <p className="eyebrow">Semana de lavadora</p>
+          <h1>Turnos claros, menos sorpresas.</h1>
         </div>
         <button className="primary-action" onClick={() => setShowForm(true)} type="button">
           <Plus size={19} />
-          Add slot
+          Agregar turno
         </button>
       </div>
 
@@ -1322,7 +1362,7 @@ function CalendarView({
                   );
                 })
               ) : (
-                <span className="open-slot">Open</span>
+                <span className="open-slot">Libre</span>
               )}
             </article>
           );
@@ -1346,12 +1386,15 @@ function CalendarView({
 function PeopleView({
   expenses,
   rotations,
-  resetDemo
+  household
 }: {
   expenses: Expense[];
   rotations: Rotation[];
-  resetDemo: () => void;
+  household: Household;
 }) {
+  const { people } = useApp();
+  const [copied, setCopied] = useState(false);
+
   function personBalance(personId: string) {
     const owes = expenses
       .flatMap((expense) =>
@@ -1375,35 +1418,50 @@ function PeopleView({
     return incoming - owes;
   }
 
+  async function copyCode() {
+    if (!household.invite_code) return;
+    try {
+      await navigator.clipboard.writeText(household.invite_code);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* ignore */
+    }
+  }
+
   return (
     <section className="view-stack">
       <div className="section-heading">
         <div>
-          <p className="eyebrow">Household</p>
-          <h1>Everyone has one clear place.</h1>
+          <p className="eyebrow">La casa</p>
+          <h1>Cada quien tiene un lugar claro.</h1>
         </div>
       </div>
 
       <div className="people-grid">
-        {PEOPLE.map((person) => {
+        {people.map((person) => {
           const balance = personBalance(person.id);
-          const nextTurn = rotations.find((rotation) => rotation.queue[rotation.currentIndex] === person.id);
+          const nextTurn = rotations.find(
+            (rotation) => rotation.queue[rotation.currentIndex] === person.id
+          );
           return (
             <article className="person-card" key={person.id}>
               <div className="person-card-top">
                 <Avatar person={person} size="lg" />
                 <div>
                   <strong>{person.name}</strong>
-                  <span>{person.role === "admin" ? "Admin" : "Member"}</span>
+                  <span>{person.role === "admin" ? "Administrador" : "Miembro"}</span>
                 </div>
               </div>
               <div className={`balance-pill ${balance >= 0 ? "positive" : "negative"}`}>
                 <CircleDollarSign size={18} />
-                <span>{balance >= 0 ? "Gets back" : "Owes"} {money(Math.abs(balance))}</span>
+                <span>
+                  {balance >= 0 ? "Recibe" : "Debe"} {money(Math.abs(balance))}
+                </span>
               </div>
               <div className="next-turn-line">
                 <RotateCw size={17} />
-                <span>{nextTurn ? nextTurn.title : "No turn right now"}</span>
+                <span>{nextTurn ? nextTurn.title : "Sin turno ahora"}</span>
               </div>
             </article>
           );
@@ -1412,67 +1470,77 @@ function PeopleView({
 
       <div className="launch-panel">
         <div>
-          <p className="eyebrow">Launch path</p>
-          <h2>Ready for the cloud handoff</h2>
+          <p className="eyebrow">Invitar</p>
+          <h2>Suma a tu familia a {household.name}</h2>
         </div>
-        <div className="launch-steps">
-          <div>
-            <Smartphone size={20} />
-            <span>Phone-ready PWA</span>
-          </div>
-          <div>
-            <Database size={20} />
-            <span>Supabase schema drafted</span>
-          </div>
-          <div>
-            <ShieldCheck size={20} />
-            <span>Private household model</span>
-          </div>
-        </div>
-        <button className="secondary-action" onClick={resetDemo} type="button">
-          <RotateCcw size={18} />
-          Reset demo
-        </button>
+        <p className="invite-help">
+          Comparte este código. Cada persona crea su cuenta y elige “Unirme con código”.
+        </p>
+        {household.invite_code ? (
+          <button className="invite-code" onClick={copyCode} type="button">
+            <KeyRound size={20} />
+            <span>{household.invite_code}</span>
+            <small>{copied ? "¡Copiado!" : "Toca para copiar"}</small>
+          </button>
+        ) : null}
       </div>
     </section>
   );
 }
 
-export function NestLoopApp() {
+// ---------------------------------------------------------------------------
+// Componente raíz
+// ---------------------------------------------------------------------------
+export function NestLoopApp({
+  people,
+  currentUserId,
+  household,
+  onSignOut
+}: {
+  people: Person[];
+  currentUserId: string;
+  household: Household;
+  onSignOut: () => void;
+}) {
   const [activeView, setActiveView] = useState<View>("home");
-  const [currentUserId, setCurrentUserId] = useStoredState("nestloop-current-user", "you");
-  const [expenses, setExpenses] = useStoredState<Expense[]>("nestloop-expenses", DEMO_EXPENSES);
-  const [rotations, setRotations] = useStoredState<Rotation[]>("nestloop-rotations", DEMO_ROTATIONS);
-  const [slots, setSlots] = useStoredState<ScheduleSlot[]>("nestloop-slots", DEMO_SLOTS);
+  const [expenses, setExpenses] = useStoredState<Expense[]>(`nestloop-expenses-${household.id}`, []);
+  const [rotations, setRotations] = useStoredState<Rotation[]>(`nestloop-rotations-${household.id}`, []);
+  const [slots, setSlots] = useStoredState<ScheduleSlot[]>(`nestloop-slots-${household.id}`, []);
   const [activeExpenseId, setActiveExpenseId] = useState<string | null>(null);
 
-  const currentUser = getPerson(currentUserId);
+  const appData = useMemo<AppData>(() => {
+    const byId = new Map(people.map((p) => [p.id, p]));
+    return {
+      people,
+      currentUserId,
+      getPerson: (id: string) => byId.get(id) ?? { ...PLACEHOLDER, id }
+    };
+  }, [people, currentUserId]);
+
+  const currentUser = appData.getPerson(currentUserId);
   const activeExpense = expenses.find((expense) => expense.id === activeExpenseId);
 
   const pendingCount = useMemo(() => {
     const myPending = expenses
-      .flatMap((expense) =>
-        expense.shares.map((share) => ({
-          expense,
-          share
-        }))
-      )
+      .flatMap((expense) => expense.shares.map((share) => ({ expense, share })))
       .filter(
         ({ expense, share }) =>
-          share.personId === currentUser.id &&
-          expense.paidBy !== currentUser.id &&
+          share.personId === currentUserId &&
+          expense.paidBy !== currentUserId &&
           share.status !== "confirmed"
       ).length;
 
     const confirmations = expenses
-      .filter((expense) => expense.paidBy === currentUser.id)
+      .filter((expense) => expense.paidBy === currentUserId)
       .flatMap((expense) => expense.shares)
       .filter((share) => share.status === "sent").length;
 
-    const turns = rotations.filter((rotation) => rotation.queue[rotation.currentIndex] === currentUser.id).length;
+    const turns = rotations.filter(
+      (rotation) => rotation.queue[rotation.currentIndex] === currentUserId
+    ).length;
 
     return myPending + confirmations + turns;
-  }, [currentUser.id, expenses, rotations]);
+  }, [currentUserId, expenses, rotations]);
 
   function createExpense(expense: Expense) {
     setExpenses((current) => [expense, ...current]);
@@ -1538,17 +1606,12 @@ export function NestLoopApp() {
     setRotations((current) =>
       current.map((rotation) => {
         if (rotation.id !== rotationId) return rotation;
-
         const currentPersonId = rotation.queue[rotation.currentIndex];
         return {
           ...rotation,
           currentIndex: (rotation.currentIndex + 1) % rotation.queue.length,
           history: [
-            {
-              personId: currentPersonId,
-              completedAt: new Date().toISOString(),
-              note: "Done"
-            },
+            { personId: currentPersonId, completedAt: new Date().toISOString(), note: "Hecho" },
             ...rotation.history
           ]
         };
@@ -1556,64 +1619,69 @@ export function NestLoopApp() {
     );
   }
 
-  function resetDemo() {
-    setExpenses(DEMO_EXPENSES);
-    setRotations(DEMO_ROTATIONS);
-    setSlots(DEMO_SLOTS);
-    setCurrentUserId("you");
-    setActiveView("home");
-  }
-
   return (
-    <main className="app-shell">
-      <AppNav activeView={activeView} setActiveView={setActiveView} />
-      <div className="app-main">
-        <TopBar currentUser={currentUser} pendingCount={pendingCount} setCurrentUserId={setCurrentUserId} />
-
-        {activeView === "home" ? (
-          <HomeView
+    <AppDataContext.Provider value={appData}>
+      <main className="app-shell">
+        <AppNav activeView={activeView} setActiveView={setActiveView} />
+        <div className="app-main">
+          <TopBar
             currentUser={currentUser}
-            expenses={expenses}
-            rotations={rotations}
-            setActiveExpenseId={setActiveExpenseId}
-            setActiveView={setActiveView}
+            household={household}
+            onSignOut={onSignOut}
+            pendingCount={pendingCount}
+          />
+
+          {activeView === "home" ? (
+            <HomeView
+              currentUser={currentUser}
+              expenses={expenses}
+              rotations={rotations}
+              setActiveExpenseId={setActiveExpenseId}
+              setActiveView={setActiveView}
+            />
+          ) : null}
+
+          {activeView === "expenses" ? (
+            <ExpensesView
+              currentUser={currentUser}
+              expenses={expenses}
+              onCreate={createExpense}
+              setActiveExpenseId={setActiveExpenseId}
+            />
+          ) : null}
+
+          {activeView === "tasks" ? (
+            <TasksView
+              rotations={rotations}
+              onComplete={completeRotation}
+              onCreate={(rotation) => setRotations((current) => [...current, rotation])}
+            />
+          ) : null}
+
+          {activeView === "calendar" ? (
+            <CalendarView
+              currentUser={currentUser}
+              slots={slots}
+              onCreate={(slot) => setSlots((current) => [...current, slot])}
+            />
+          ) : null}
+
+          {activeView === "people" ? (
+            <PeopleView expenses={expenses} household={household} rotations={rotations} />
+          ) : null}
+        </div>
+
+        {activeExpense ? (
+          <ExpenseDetail
+            currentUser={currentUser}
+            expense={activeExpense}
+            onClose={() => setActiveExpenseId(null)}
+            onConfirm={confirmPayment}
+            onMarkPaid={markPaid}
+            onReject={rejectPayment}
           />
         ) : null}
-
-        {activeView === "expenses" ? (
-          <ExpensesView
-            currentUser={currentUser}
-            expenses={expenses}
-            onCreate={createExpense}
-            setActiveExpenseId={setActiveExpenseId}
-          />
-        ) : null}
-
-        {activeView === "tasks" ? <TasksView rotations={rotations} onComplete={completeRotation} /> : null}
-
-        {activeView === "calendar" ? (
-          <CalendarView
-            currentUser={currentUser}
-            slots={slots}
-            onCreate={(slot) => setSlots((current) => [...current, slot])}
-          />
-        ) : null}
-
-        {activeView === "people" ? (
-          <PeopleView expenses={expenses} resetDemo={resetDemo} rotations={rotations} />
-        ) : null}
-      </div>
-
-      {activeExpense ? (
-        <ExpenseDetail
-          currentUser={currentUser}
-          expense={activeExpense}
-          onClose={() => setActiveExpenseId(null)}
-          onConfirm={confirmPayment}
-          onMarkPaid={markPaid}
-          onReject={rejectPayment}
-        />
-      ) : null}
-    </main>
+      </main>
+    </AppDataContext.Provider>
   );
 }

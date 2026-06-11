@@ -11,3 +11,4 @@ pnpm-debug.log*
 next-dev.*.log
 .DS_Store
 *.tsbuildinfo
+.claude/launch.json
