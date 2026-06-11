@@ -1380,6 +1380,20 @@ textarea:focus {
   animation: nl-spin 1s linear infinite;
 }
 
+.loading-mark.small {
+  width: 46px;
+  height: 46px;
+  box-shadow: none;
+  background: var(--mint-soft);
+}
+
+.receipt-img {
+  width: 100%;
+  max-height: 170px;
+  border-radius: var(--radius);
+  object-fit: cover;
+}
+
 @keyframes nl-spin {
   to {
     transform: rotate(360deg);

@@ -119,7 +119,15 @@ Implementada con auth client-side (`@supabase/supabase-js`, sesión persistida e
 
 </details>
 
-### Fase 9 — Conectar datos reales, módulo por módulo (commit y prueba por módulo)
+### Fase 9 — Conectar datos reales ✅ COMPLETADA (2026-06-11)
+
+Toda la app dejó de usar localStorage y ahora lee/escribe en Supabase. Capa de datos en `lib/api.ts` (gastos, divisiones, pagos, turnos, eventos, horarios + URLs firmadas para fotos). `components/NestLoopApp.tsx` reescrito: carga datos por casa al montar, formularios async con estado "Guardando…" y errores amables, subida real de fotos (factura → bucket `receipts`, comprobante → `payment-proofs`, ruta `<household_id>/...`), y `SignedImage` para mostrar fotos de buckets privados. Migración `phase9_rotation_icon_and_events`: columna `icon` en `task_rotations` + se relajó la política INSERT de `task_events` para que cualquier miembro pueda marcar un turno hecho.
+
+- **Build OK**. **Validado E2E por REST** (gasto+divisiones, marcar pago, turno+miembros+evento+avance, horario con tipo `time`, **subida real a Storage** OK, subida cruzada BLOQUEADA). **Verificado en navegador real**: login → crear casa → crear gasto → se guarda en Supabase y aparece; sin errores de consola.
+- Horario de lavadora ahora usa selector de hora (`type="time"`), más fácil que escribir "6:00 PM".
+- Flujo efectivo/transferencia funcionando: transferencia con comprobante → confirmado; efectivo → "Por aprobar" hasta que quien cobró acepte/rechace.
+
+<details><summary>Plan original de la Fase 9 (referencia)</summary>
 
 Orden recomendado (de mayor a menor valor):
 
@@ -135,6 +143,10 @@ Durante esta fase:
 - Considerar Realtime de Supabase (suscripciones) para que los cambios se vean al instante entre miembros — opcional, un refetch al volver a la vista es suficiente para v1.
 
 **Criterio de aceptación por módulo**: el dato creado en un navegador aparece en otro navegador con otro usuario; las fotos se suben y se ven; el flujo efectivo-requiere-confirmación funciona de punta a punta. Verificar también en el deploy de Vercel, no solo local.
+
+</details>
+
+**Diferido a futuro (no bloquea):** dividir `NestLoopApp.tsx` en archivos por vista (sigue siendo monolito, ~1300 líneas) y Realtime de Supabase (hoy se recarga tras cada acción; suficiente para v1). Mostrar comprobantes de pago con `SignedImage` en cada fila (hoy solo se muestra la factura del gasto).
 
 ### Fase 10 — Entrega a la familia
 

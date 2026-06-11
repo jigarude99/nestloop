@@ -32,6 +32,7 @@ import {
   createContext,
   CSSProperties,
   FormEvent,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -39,66 +40,30 @@ import {
 } from "react";
 import { hasSupabaseConfig } from "../lib/supabase";
 import { Household, Person } from "../lib/household";
+import {
+  createExpense as apiCreateExpense,
+  createRotation as apiCreateRotation,
+  createSlot as apiCreateSlot,
+  completeRotation as apiCompleteRotation,
+  fetchExpenses,
+  fetchRotations,
+  fetchSlots,
+  markSharePaid,
+  setShareStatus,
+  signedUrl,
+  type Expense,
+  type NewExpenseInput,
+  type PaymentMethod,
+  type PaymentStatus,
+  type Rotation,
+  type RotationIcon,
+  type ScheduleSlot
+} from "../lib/api";
 
 type View = "home" | "expenses" | "tasks" | "calendar" | "people";
 type SplitMode = "equal" | "custom";
-type PaymentStatus = "pending" | "sent" | "confirmed" | "rejected";
-type PaymentMethod = "transfer" | "cash" | "other";
 
-type ExpenseShare = {
-  personId: string;
-  amount: number;
-  status: PaymentStatus;
-  paymentMethod?: PaymentMethod;
-  proofName?: string;
-  sentAt?: string;
-  confirmedAt?: string;
-};
-
-type Expense = {
-  id: string;
-  title: string;
-  merchant: string;
-  category: string;
-  amount: number;
-  paidBy: string;
-  purchasedAt: string;
-  createdAt: string;
-  note: string;
-  receiptName?: string;
-  shares: ExpenseShare[];
-};
-
-type RotationEvent = {
-  personId: string;
-  completedAt: string;
-  note: string;
-};
-
-type Rotation = {
-  id: string;
-  title: string;
-  cadence: string;
-  icon: "water" | "trash" | "plants";
-  queue: string[];
-  currentIndex: number;
-  history: RotationEvent[];
-};
-
-type ScheduleSlot = {
-  id: string;
-  day: number;
-  personId: string;
-  start: string;
-  end: string;
-  label: string;
-};
-
-type NavItem = {
-  view: View;
-  label: string;
-  icon: LucideIcon;
-};
+type NavItem = { view: View; label: string; icon: LucideIcon };
 
 const NAV_ITEMS: NavItem[] = [
   { view: "home", label: "Inicio", icon: Home },
@@ -139,28 +104,16 @@ const PLACEHOLDER: Person = {
 };
 
 // ---------------------------------------------------------------------------
-// Utilidades
+// Utilidades de formato
 // ---------------------------------------------------------------------------
-function uid(prefix: string) {
-  const value =
-    typeof crypto !== "undefined" && "randomUUID" in crypto
-      ? crypto.randomUUID()
-      : Math.random().toString(36).slice(2);
-  return `${prefix}-${value}`;
-}
-
 function money(value: number) {
-  return new Intl.NumberFormat("es", {
-    style: "currency",
-    currency: "USD"
-  }).format(value);
+  return new Intl.NumberFormat("es", { style: "currency", currency: "USD" }).format(value);
 }
 
 function shortDate(value: string) {
-  return new Intl.DateTimeFormat("es", {
-    month: "short",
-    day: "numeric"
-  }).format(new Date(`${value}T12:00:00`));
+  return new Intl.DateTimeFormat("es", { month: "short", day: "numeric" }).format(
+    new Date(`${value}T12:00:00`)
+  );
 }
 
 function relativeDate(value: string) {
@@ -175,47 +128,25 @@ function relativeDate(value: string) {
 function cents(value: number) {
   return Math.round(value * 100);
 }
-
 function fromCents(value: number) {
   return value / 100;
 }
-
 function parseMoney(value: string) {
   const parsed = Number(value.replace(/[^\d.]/g, ""));
   return Number.isFinite(parsed) ? parsed : 0;
 }
-
 function splitEvenly(total: number, count: number) {
   const totalCents = cents(total);
   const base = Math.floor(totalCents / count);
   const remainder = totalCents % count;
-  return Array.from({ length: count }, (_, index) =>
-    fromCents(base + (index < remainder ? 1 : 0))
-  );
+  return Array.from({ length: count }, (_, index) => fromCents(base + (index < remainder ? 1 : 0)));
 }
 
-function useStoredState<T>(key: string, initialValue: T) {
-  const [value, setValue] = useState<T>(initialValue);
-  const [ready, setReady] = useState(false);
-
-  useEffect(() => {
-    try {
-      const stored = window.localStorage.getItem(key);
-      setValue(stored ? (JSON.parse(stored) as T) : initialValue);
-    } catch {
-      setValue(initialValue);
-    } finally {
-      setReady(true);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key]);
-
-  useEffect(() => {
-    if (!ready) return;
-    window.localStorage.setItem(key, JSON.stringify(value));
-  }, [key, ready, value]);
-
-  return [value, setValue] as const;
+function methodLabel(method?: PaymentMethod) {
+  if (method === "transfer") return "Transferencia";
+  if (method === "cash") return "Efectivo";
+  if (method === "other") return "Otro";
+  return undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -251,10 +182,34 @@ function IconBubble({ icon: Icon, tone }: { icon: LucideIcon; tone: string }) {
   );
 }
 
-function rotationIcon(icon: Rotation["icon"]) {
+function rotationIcon(icon: RotationIcon) {
   if (icon === "water") return Droplets;
   if (icon === "trash") return RotateCcw;
   return Sparkles;
+}
+
+/** Muestra una imagen de un bucket privado usando una URL firmada. */
+function SignedImage({
+  bucket,
+  path,
+  alt
+}: {
+  bucket: "receipts" | "payment-proofs";
+  path: string;
+  alt: string;
+}) {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    let on = true;
+    signedUrl(bucket, path).then((u) => {
+      if (on) setUrl(u);
+    });
+    return () => {
+      on = false;
+    };
+  }, [bucket, path]);
+  if (!url) return null;
+  return <img className="receipt-img" src={url} alt={alt} />;
 }
 
 function AppNav({
@@ -449,13 +404,7 @@ function HomeView({
           tone="coral"
           value={money(amountOwed)}
         />
-        <StatCard
-          helper="A la espera"
-          icon={HandCoins}
-          label="Te deben"
-          tone="mint"
-          value={money(amountIncoming)}
-        />
+        <StatCard helper="A la espera" icon={HandCoins} label="Te deben" tone="mint" value={money(amountIncoming)} />
         <StatCard
           helper={currentTurns.length ? "Te toca" : "Nada urgente"}
           icon={RotateCw}
@@ -508,12 +457,7 @@ function HomeView({
         {currentTurns.map((rotation) => {
           const Icon = rotationIcon(rotation.icon);
           return (
-            <button
-              className="action-row"
-              key={rotation.id}
-              onClick={() => setActiveView("tasks")}
-              type="button"
-            >
+            <button className="action-row" key={rotation.id} onClick={() => setActiveView("tasks")} type="button">
               <IconBubble icon={Icon} tone="sky" />
               <span>
                 <strong>{rotation.title}</strong>
@@ -566,9 +510,7 @@ function ExpenseCard({ expense, onOpen }: { expense: Expense; onOpen: (id: strin
   const { getPerson } = useApp();
   const paidBy = getPerson(expense.paidBy);
   const confirmed = expense.shares.filter((share) => share.status === "confirmed").length;
-  const progress = expense.shares.length
-    ? Math.round((confirmed / expense.shares.length) * 100)
-    : 0;
+  const progress = expense.shares.length ? Math.round((confirmed / expense.shares.length) * 100) : 0;
 
   return (
     <button className="expense-card" onClick={() => onOpen(expense.id)} type="button">
@@ -609,7 +551,7 @@ function ExpenseForm({
 }: {
   currentUser: Person;
   onClose: () => void;
-  onCreate: (expense: Expense) => void;
+  onCreate: (input: NewExpenseInput) => Promise<void>;
 }) {
   const { people } = useApp();
   const [title, setTitle] = useState("Compra compartida");
@@ -618,7 +560,7 @@ function ExpenseForm({
   const [amount, setAmount] = useState("");
   const [paidBy, setPaidBy] = useState(currentUser.id);
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
-  const [receiptName, setReceiptName] = useState("");
+  const [receiptFile, setReceiptFile] = useState<File | null>(null);
   const [note, setNote] = useState("");
   const [splitMode, setSplitMode] = useState<SplitMode>("equal");
   const [selected, setSelected] = useState<Record<string, boolean>>(() =>
@@ -627,6 +569,8 @@ function ExpenseForm({
   const [customAmounts, setCustomAmounts] = useState<Record<string, string>>(() =>
     Object.fromEntries(people.map((person) => [person.id, ""]))
   );
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const selectedPeople = people.filter((person) => selected[person.id]);
   const total = parseMoney(amount);
@@ -637,37 +581,36 @@ function ExpenseForm({
   );
   const customDifference = total - customTotal;
   const validCustom = splitMode === "equal" || Math.abs(customDifference) < 0.01;
-  const canSubmit =
-    title.trim() && total > 0 && selectedPeople.length > 0 && validCustom;
+  const canSubmit = Boolean(title.trim() && total > 0 && selectedPeople.length > 0 && validCustom);
 
-  function submit(event: FormEvent<HTMLFormElement>) {
+  async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!canSubmit) return;
+    if (!canSubmit || saving) return;
+    setSaving(true);
+    setError(null);
 
-    const shares = selectedPeople.map((person, index) => {
-      const shareAmount =
-        splitMode === "equal" ? evenAmounts[index] : parseMoney(customAmounts[person.id] || "0");
-      return {
-        personId: person.id,
-        amount: shareAmount,
-        status: person.id === paidBy ? ("confirmed" as PaymentStatus) : ("pending" as PaymentStatus),
-        confirmedAt: person.id === paidBy ? new Date().toISOString() : undefined
-      };
-    });
+    const participants = selectedPeople.map((person, index) => ({
+      personId: person.id,
+      amount: splitMode === "equal" ? evenAmounts[index] : parseMoney(customAmounts[person.id] || "0")
+    }));
 
-    onCreate({
-      id: uid("expense"),
-      title: title.trim(),
-      merchant: merchant.trim(),
-      category,
-      amount: total,
-      paidBy,
-      purchasedAt: date,
-      createdAt: new Date().toISOString(),
-      note: note.trim(),
-      receiptName: receiptName || undefined,
-      shares
-    });
+    try {
+      await onCreate({
+        title: title.trim(),
+        merchant: merchant.trim(),
+        category,
+        amount: total,
+        paidBy,
+        purchasedAt: date,
+        note: note.trim(),
+        receiptFile,
+        participants
+      });
+      onClose();
+    } catch {
+      setError("No se pudo guardar el gasto. Revisa tu conexión e intenta de nuevo.");
+      setSaving(false);
+    }
   }
 
   return (
@@ -690,20 +633,11 @@ function ExpenseForm({
           </label>
           <label>
             <span>Tienda</span>
-            <input
-              placeholder="Ej: Walmart"
-              value={merchant}
-              onChange={(event) => setMerchant(event.target.value)}
-            />
+            <input placeholder="Ej: Walmart" value={merchant} onChange={(event) => setMerchant(event.target.value)} />
           </label>
           <label>
             <span>Total</span>
-            <input
-              inputMode="decimal"
-              placeholder="0.00"
-              value={amount}
-              onChange={(event) => setAmount(event.target.value)}
-            />
+            <input inputMode="decimal" placeholder="0.00" value={amount} onChange={(event) => setAmount(event.target.value)} />
           </label>
           <label>
             <span>Fecha</span>
@@ -731,54 +665,39 @@ function ExpenseForm({
 
         <label className="file-pick">
           <Camera size={19} />
-          <span>{receiptName || "Adjuntar foto de la factura"}</span>
+          <span>{receiptFile?.name || "Adjuntar foto de la factura"}</span>
           <input
             type="file"
             accept="image/*"
-            onChange={(event) => setReceiptName(event.target.files?.[0]?.name ?? "")}
+            onChange={(event) => setReceiptFile(event.target.files?.[0] ?? null)}
           />
         </label>
 
         <label>
           <span>Nota</span>
-          <textarea
-            value={note}
-            onChange={(event) => setNote(event.target.value)}
-            placeholder="Opcional"
-            rows={3}
-          />
+          <textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder="Opcional" rows={3} />
         </label>
 
         <div className="split-toolbar">
           <span>Dividir</span>
           <div className="segmented">
-            <button
-              className={splitMode === "equal" ? "active" : ""}
-              onClick={() => setSplitMode("equal")}
-              type="button"
-            >
+            <button className={splitMode === "equal" ? "active" : ""} onClick={() => setSplitMode("equal")} type="button">
               Igual
             </button>
-            <button
-              className={splitMode === "custom" ? "active" : ""}
-              onClick={() => setSplitMode("custom")}
-              type="button"
-            >
+            <button className={splitMode === "custom" ? "active" : ""} onClick={() => setSplitMode("custom")} type="button">
               Personalizado
             </button>
           </div>
         </div>
 
         <div className="people-picker">
-          {people.map((person, index) => {
+          {people.map((person) => {
             const isSelected = selected[person.id];
             return (
               <div className={`share-row ${isSelected ? "selected" : ""}`} key={person.id}>
                 <button
                   className="check-person"
-                  onClick={() =>
-                    setSelected((current) => ({ ...current, [person.id]: !current[person.id] }))
-                  }
+                  onClick={() => setSelected((current) => ({ ...current, [person.id]: !current[person.id] }))}
                   type="button"
                 >
                   <Avatar person={person} size="sm" />
@@ -793,10 +712,7 @@ function ExpenseForm({
                     placeholder="0.00"
                     value={customAmounts[person.id] ?? ""}
                     onChange={(event) =>
-                      setCustomAmounts((current) => ({
-                        ...current,
-                        [person.id]: event.target.value
-                      }))
+                      setCustomAmounts((current) => ({ ...current, [person.id]: event.target.value }))
                     }
                   />
                 ) : (
@@ -815,9 +731,11 @@ function ExpenseForm({
           </div>
         ) : null}
 
-        <button className="primary-action full" disabled={!canSubmit} type="submit">
+        {error ? <div className="auth-alert error">{error}</div> : null}
+
+        <button className="primary-action full" disabled={!canSubmit || saving} type="submit">
           <Plus size={19} />
-          Crear gasto
+          {saving ? "Guardando…" : "Crear gasto"}
         </button>
       </form>
     </div>
@@ -835,17 +753,33 @@ function ExpenseDetail({
   expense: Expense;
   currentUser: Person;
   onClose: () => void;
-  onMarkPaid: (expenseId: string, personId: string, method: PaymentMethod, proofName?: string) => void;
-  onConfirm: (expenseId: string, personId: string) => void;
-  onReject: (expenseId: string, personId: string) => void;
+  onMarkPaid: (expenseId: string, personId: string, method: PaymentMethod, proofFile: File | null) => Promise<void>;
+  onConfirm: (expenseId: string, personId: string) => Promise<void>;
+  onReject: (expenseId: string, personId: string) => Promise<void>;
 }) {
   const { getPerson } = useApp();
   const [method, setMethod] = useState<PaymentMethod>("transfer");
-  const [proofName, setProofName] = useState("");
+  const [proofFile, setProofFile] = useState<File | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
   const payer = getPerson(expense.paidBy);
   const currentShare = expense.shares.find((share) => share.personId === currentUser.id);
   const needsProof = method !== "cash";
-  const canSendPayment = currentShare && currentShare.status !== "confirmed" && (!needsProof || proofName);
+  const canSendPayment =
+    !!currentShare && currentShare.status !== "confirmed" && (!needsProof || !!proofFile) && !busy;
+
+  async function run(action: () => Promise<void>) {
+    setBusy(true);
+    setError(null);
+    try {
+      await action();
+    } catch {
+      setError("No se pudo guardar. Intenta de nuevo.");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
     <div className="modal-backdrop" role="presentation">
@@ -862,8 +796,14 @@ function ExpenseDetail({
 
         <div className="detail-hero">
           <div className="receipt-preview">
-            <ReceiptText size={28} />
-            <span>{expense.receiptName ?? "Sin foto"}</span>
+            {expense.receiptPath ? (
+              <SignedImage bucket="receipts" path={expense.receiptPath} alt="Factura" />
+            ) : (
+              <>
+                <ReceiptText size={28} />
+                <span>Sin foto</span>
+              </>
+            )}
           </div>
           <div className="detail-money">
             <span>Total</span>
@@ -891,9 +831,7 @@ function ExpenseDetail({
                   <Avatar person={person} size="sm" />
                   <span>
                     <strong>{person.name}</strong>
-                    <small>
-                      {share.proofName ?? methodLabel(share.paymentMethod) ?? "Sin comprobante"}
-                    </small>
+                    <small>{share.proofName ?? methodLabel(share.paymentMethod) ?? "Sin comprobante"}</small>
                   </span>
                 </div>
                 <strong>{money(share.amount)}</strong>
@@ -902,14 +840,16 @@ function ExpenseDetail({
                   <div className="row-actions">
                     <button
                       className="tiny-button good"
-                      onClick={() => onConfirm(expense.id, share.personId)}
+                      disabled={busy}
+                      onClick={() => run(() => onConfirm(expense.id, share.personId))}
                       type="button"
                     >
                       Aceptar
                     </button>
                     <button
                       className="tiny-button"
-                      onClick={() => onReject(expense.id, share.personId)}
+                      disabled={busy}
+                      onClick={() => run(() => onReject(expense.id, share.personId))}
                       type="button"
                     >
                       Rechazar
@@ -926,18 +866,10 @@ function ExpenseDetail({
             <div className="split-toolbar">
               <span>Marcar pago</span>
               <div className="segmented">
-                <button
-                  className={method === "transfer" ? "active" : ""}
-                  onClick={() => setMethod("transfer")}
-                  type="button"
-                >
+                <button className={method === "transfer" ? "active" : ""} onClick={() => setMethod("transfer")} type="button">
                   Transferencia
                 </button>
-                <button
-                  className={method === "cash" ? "active" : ""}
-                  onClick={() => setMethod("cash")}
-                  type="button"
-                >
+                <button className={method === "cash" ? "active" : ""} onClick={() => setMethod("cash")} type="button">
                   Efectivo
                 </button>
               </div>
@@ -945,11 +877,11 @@ function ExpenseDetail({
             {method !== "cash" ? (
               <label className="file-pick">
                 <Upload size={18} />
-                <span>{proofName || "Subir captura del pago"}</span>
+                <span>{proofFile?.name || "Subir captura del pago"}</span>
                 <input
                   type="file"
                   accept="image/*"
-                  onChange={(event) => setProofName(event.target.files?.[0]?.name ?? "")}
+                  onChange={(event) => setProofFile(event.target.files?.[0] ?? null)}
                 />
               </label>
             ) : (
@@ -961,14 +893,16 @@ function ExpenseDetail({
             <button
               className="primary-action full"
               disabled={!canSendPayment}
-              onClick={() => onMarkPaid(expense.id, currentUser.id, method, proofName)}
+              onClick={() => run(() => onMarkPaid(expense.id, currentUser.id, method, proofFile))}
               type="button"
             >
               <BadgeCheck size={19} />
-              Marcar {money(currentShare.amount)} pagado
+              {busy ? "Guardando…" : `Marcar ${money(currentShare.amount)} pagado`}
             </button>
           </div>
         ) : null}
+
+        {error ? <div className="auth-alert error">{error}</div> : null}
 
         <div className="timeline-note">
           <Clock3 size={17} />
@@ -979,13 +913,6 @@ function ExpenseDetail({
   );
 }
 
-function methodLabel(method?: PaymentMethod) {
-  if (method === "transfer") return "Transferencia";
-  if (method === "cash") return "Efectivo";
-  if (method === "other") return "Otro";
-  return undefined;
-}
-
 function ExpensesView({
   currentUser,
   expenses,
@@ -994,7 +921,7 @@ function ExpensesView({
 }: {
   currentUser: Person;
   expenses: Expense[];
-  onCreate: (expense: Expense) => void;
+  onCreate: (input: NewExpenseInput) => Promise<void>;
   setActiveExpenseId: (id: string) => void;
 }) {
   const [showForm, setShowForm] = useState(false);
@@ -1027,15 +954,7 @@ function ExpensesView({
       )}
 
       {showForm ? (
-        <ExpenseForm
-          currentUser={currentUser}
-          onClose={() => setShowForm(false)}
-          onCreate={(expense) => {
-            onCreate(expense);
-            setShowForm(false);
-            setActiveExpenseId(expense.id);
-          }}
-        />
+        <ExpenseForm currentUser={currentUser} onClose={() => setShowForm(false)} onCreate={onCreate} />
       ) : null}
     </section>
   );
@@ -1046,11 +965,21 @@ function RotationCard({
   onComplete
 }: {
   rotation: Rotation;
-  onComplete: (id: string) => void;
+  onComplete: (rotation: Rotation) => Promise<void>;
 }) {
   const { getPerson } = useApp();
+  const [busy, setBusy] = useState(false);
   const Icon = rotationIcon(rotation.icon);
   const currentPerson = getPerson(rotation.queue[rotation.currentIndex]);
+
+  async function complete() {
+    setBusy(true);
+    try {
+      await onComplete(rotation);
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
     <article className="rotation-card">
@@ -1080,9 +1009,9 @@ function RotationCard({
           );
         })}
       </div>
-      <button className="secondary-action full" onClick={() => onComplete(rotation.id)} type="button">
+      <button className="secondary-action full" disabled={busy} onClick={complete} type="button">
         <CheckCircle2 size={19} />
-        Marcar hecho
+        {busy ? "Guardando…" : "Marcar hecho"}
       </button>
       <div className="history-list">
         {rotation.history.slice(0, 2).map((event) => (
@@ -1101,30 +1030,37 @@ function RotationForm({
   onCreate
 }: {
   onClose: () => void;
-  onCreate: (rotation: Rotation) => void;
+  onCreate: (input: { title: string; cadence: string; icon: RotationIcon; queue: string[] }) => Promise<void>;
 }) {
-  const { people, currentUserId } = useApp();
+  const { people } = useApp();
   const [title, setTitle] = useState("Comprar agua");
   const [cadence, setCadence] = useState("Cuando se acaba");
-  const [icon, setIcon] = useState<Rotation["icon"]>("water");
+  const [icon, setIcon] = useState<RotationIcon>("water");
   const [queue, setQueue] = useState<Record<string, boolean>>(() =>
     Object.fromEntries(people.map((p) => [p.id, true]))
   );
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const chosen = people.filter((p) => queue[p.id]);
 
-  function submit(event: FormEvent<HTMLFormElement>) {
+  async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!title.trim() || chosen.length === 0) return;
-    onCreate({
-      id: uid("rotation"),
-      title: title.trim(),
-      cadence: cadence.trim() || "Por turnos",
-      icon,
-      queue: chosen.map((p) => p.id),
-      currentIndex: 0,
-      history: []
-    });
+    if (!title.trim() || chosen.length === 0 || saving) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await onCreate({
+        title: title.trim(),
+        cadence: cadence.trim() || "Por turnos",
+        icon,
+        queue: chosen.map((p) => p.id)
+      });
+      onClose();
+    } catch {
+      setError("No se pudo crear el turno. Intenta de nuevo.");
+      setSaving(false);
+    }
   }
 
   return (
@@ -1149,7 +1085,7 @@ function RotationForm({
         </label>
         <label>
           <span>Ícono</span>
-          <select value={icon} onChange={(e) => setIcon(e.target.value as Rotation["icon"])}>
+          <select value={icon} onChange={(e) => setIcon(e.target.value as RotationIcon)}>
             <option value="water">Agua</option>
             <option value="trash">Basura</option>
             <option value="plants">Plantas / otro</option>
@@ -1176,11 +1112,11 @@ function RotationForm({
         <p className="difference-note ok" style={{ marginTop: 0 }}>
           El orden de la lista marca quién va primero. Empieza por {chosen[0]?.name ?? "—"}.
         </p>
-        <button className="primary-action full" type="submit" disabled={!title.trim() || !chosen.length}>
+        {error ? <div className="auth-alert error">{error}</div> : null}
+        <button className="primary-action full" type="submit" disabled={!title.trim() || !chosen.length || saving}>
           <Plus size={19} />
-          Crear turno
+          {saving ? "Guardando…" : "Crear turno"}
         </button>
-        <input type="hidden" value={currentUserId} readOnly />
       </form>
     </div>
   );
@@ -1192,8 +1128,8 @@ function TasksView({
   onCreate
 }: {
   rotations: Rotation[];
-  onComplete: (id: string) => void;
-  onCreate: (rotation: Rotation) => void;
+  onComplete: (rotation: Rotation) => Promise<void>;
+  onCreate: (input: { title: string; cadence: string; icon: RotationIcon; queue: string[] }) => Promise<void>;
 }) {
   const [showForm, setShowForm] = useState(false);
 
@@ -1222,15 +1158,7 @@ function TasksView({
           <span>Crea el del agua para empezar.</span>
         </div>
       )}
-      {showForm ? (
-        <RotationForm
-          onClose={() => setShowForm(false)}
-          onCreate={(rotation) => {
-            onCreate(rotation);
-            setShowForm(false);
-          }}
-        />
-      ) : null}
+      {showForm ? <RotationForm onClose={() => setShowForm(false)} onCreate={onCreate} /> : null}
     </section>
   );
 }
@@ -1242,24 +1170,28 @@ function ScheduleForm({
 }: {
   currentUser: Person;
   onClose: () => void;
-  onCreate: (slot: ScheduleSlot) => void;
+  onCreate: (input: { personId: string; day: number; start: string; end: string }) => Promise<void>;
 }) {
   const { people } = useApp();
   const [personId, setPersonId] = useState(currentUser.id);
   const [day, setDay] = useState("0");
-  const [start, setStart] = useState("6:00 PM");
-  const [end, setEnd] = useState("8:00 PM");
+  const [start, setStart] = useState("18:00");
+  const [end, setEnd] = useState("20:00");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  function submit(event: FormEvent<HTMLFormElement>) {
+  async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    onCreate({
-      id: uid("slot"),
-      day: Number(day),
-      personId,
-      start,
-      end,
-      label: "Lavadora"
-    });
+    if (saving) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await onCreate({ personId, day: Number(day), start, end });
+      onClose();
+    } catch {
+      setError("No se pudo agregar el turno. Intenta de nuevo.");
+      setSaving(false);
+    }
   }
 
   return (
@@ -1297,16 +1229,17 @@ function ScheduleForm({
         <div className="form-grid two">
           <label>
             <span>Inicio</span>
-            <input value={start} onChange={(event) => setStart(event.target.value)} />
+            <input type="time" value={start} onChange={(event) => setStart(event.target.value)} />
           </label>
           <label>
             <span>Fin</span>
-            <input value={end} onChange={(event) => setEnd(event.target.value)} />
+            <input type="time" value={end} onChange={(event) => setEnd(event.target.value)} />
           </label>
         </div>
-        <button className="primary-action full" type="submit">
+        {error ? <div className="auth-alert error">{error}</div> : null}
+        <button className="primary-action full" type="submit" disabled={saving}>
           <Plus size={19} />
-          Agregar turno
+          {saving ? "Guardando…" : "Agregar turno"}
         </button>
       </form>
     </div>
@@ -1320,7 +1253,7 @@ function CalendarView({
 }: {
   currentUser: Person;
   slots: ScheduleSlot[];
-  onCreate: (slot: ScheduleSlot) => void;
+  onCreate: (input: { personId: string; day: number; start: string; end: string }) => Promise<void>;
 }) {
   const { getPerson } = useApp();
   const [showForm, setShowForm] = useState(false);
@@ -1370,14 +1303,7 @@ function CalendarView({
       </div>
 
       {showForm ? (
-        <ScheduleForm
-          currentUser={currentUser}
-          onClose={() => setShowForm(false)}
-          onCreate={(slot) => {
-            onCreate(slot);
-            setShowForm(false);
-          }}
-        />
+        <ScheduleForm currentUser={currentUser} onClose={() => setShowForm(false)} onCreate={onCreate} />
       ) : null}
     </section>
   );
@@ -1401,9 +1327,7 @@ function PeopleView({
         expense.shares
           .filter(
             (share) =>
-              share.personId === personId &&
-              expense.paidBy !== personId &&
-              share.status !== "confirmed"
+              share.personId === personId && expense.paidBy !== personId && share.status !== "confirmed"
           )
           .map((share) => share.amount)
       )
@@ -1441,9 +1365,7 @@ function PeopleView({
       <div className="people-grid">
         {people.map((person) => {
           const balance = personBalance(person.id);
-          const nextTurn = rotations.find(
-            (rotation) => rotation.queue[rotation.currentIndex] === person.id
-          );
+          const nextTurn = rotations.find((rotation) => rotation.queue[rotation.currentIndex] === person.id);
           return (
             <article className="person-card" key={person.id}>
               <div className="person-card-top">
@@ -1503,10 +1425,46 @@ export function NestLoopApp({
   onSignOut: () => void;
 }) {
   const [activeView, setActiveView] = useState<View>("home");
-  const [expenses, setExpenses] = useStoredState<Expense[]>(`nestloop-expenses-${household.id}`, []);
-  const [rotations, setRotations] = useStoredState<Rotation[]>(`nestloop-rotations-${household.id}`, []);
-  const [slots, setSlots] = useStoredState<ScheduleSlot[]>(`nestloop-slots-${household.id}`, []);
+  const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [rotations, setRotations] = useState<Rotation[]>([]);
+  const [slots, setSlots] = useState<ScheduleSlot[]>([]);
   const [activeExpenseId, setActiveExpenseId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
+
+  const hid = household.id;
+
+  const reloadExpenses = useCallback(async () => {
+    setExpenses(await fetchExpenses(hid));
+  }, [hid]);
+  const reloadRotations = useCallback(async () => {
+    setRotations(await fetchRotations(hid));
+  }, [hid]);
+  const reloadSlots = useCallback(async () => {
+    setSlots(await fetchSlots(hid));
+  }, [hid]);
+
+  useEffect(() => {
+    let on = true;
+    setLoading(true);
+    setLoadError(false);
+    Promise.all([fetchExpenses(hid), fetchRotations(hid), fetchSlots(hid)])
+      .then(([e, r, s]) => {
+        if (!on) return;
+        setExpenses(e);
+        setRotations(r);
+        setSlots(s);
+      })
+      .catch(() => {
+        if (on) setLoadError(true);
+      })
+      .finally(() => {
+        if (on) setLoading(false);
+      });
+    return () => {
+      on = false;
+    };
+  }, [hid]);
 
   const appData = useMemo<AppData>(() => {
     const byId = new Map(people.map((p) => [p.id, p]));
@@ -1535,88 +1493,49 @@ export function NestLoopApp({
       .flatMap((expense) => expense.shares)
       .filter((share) => share.status === "sent").length;
 
-    const turns = rotations.filter(
-      (rotation) => rotation.queue[rotation.currentIndex] === currentUserId
-    ).length;
+    const turns = rotations.filter((rotation) => rotation.queue[rotation.currentIndex] === currentUserId).length;
 
     return myPending + confirmations + turns;
   }, [currentUserId, expenses, rotations]);
 
-  function createExpense(expense: Expense) {
-    setExpenses((current) => [expense, ...current]);
+  // Acciones (lanzan error para que el formulario lo muestre)
+  async function handleCreateExpense(input: NewExpenseInput) {
+    await apiCreateExpense(hid, currentUserId, input);
+    await reloadExpenses();
   }
-
-  function markPaid(expenseId: string, personId: string, method: PaymentMethod, proofName?: string) {
-    setExpenses((current) =>
-      current.map((expense) =>
-        expense.id === expenseId
-          ? {
-              ...expense,
-              shares: expense.shares.map((share) =>
-                share.personId === personId
-                  ? {
-                      ...share,
-                      status: method === "cash" ? "sent" : "confirmed",
-                      paymentMethod: method,
-                      proofName,
-                      sentAt: new Date().toISOString(),
-                      confirmedAt: method === "cash" ? undefined : new Date().toISOString()
-                    }
-                  : share
-              )
-            }
-          : expense
-      )
-    );
+  async function handleMarkPaid(
+    expenseId: string,
+    personId: string,
+    method: PaymentMethod,
+    proofFile: File | null
+  ) {
+    await markSharePaid(hid, expenseId, personId, method, proofFile);
+    await reloadExpenses();
   }
-
-  function confirmPayment(expenseId: string, personId: string) {
-    setExpenses((current) =>
-      current.map((expense) =>
-        expense.id === expenseId
-          ? {
-              ...expense,
-              shares: expense.shares.map((share) =>
-                share.personId === personId
-                  ? { ...share, status: "confirmed", confirmedAt: new Date().toISOString() }
-                  : share
-              )
-            }
-          : expense
-      )
-    );
+  async function handleConfirm(expenseId: string, personId: string) {
+    await setShareStatus(expenseId, personId, "confirmed");
+    await reloadExpenses();
   }
-
-  function rejectPayment(expenseId: string, personId: string) {
-    setExpenses((current) =>
-      current.map((expense) =>
-        expense.id === expenseId
-          ? {
-              ...expense,
-              shares: expense.shares.map((share) =>
-                share.personId === personId ? { ...share, status: "rejected" } : share
-              )
-            }
-          : expense
-      )
-    );
+  async function handleReject(expenseId: string, personId: string) {
+    await setShareStatus(expenseId, personId, "rejected");
+    await reloadExpenses();
   }
-
-  function completeRotation(rotationId: string) {
-    setRotations((current) =>
-      current.map((rotation) => {
-        if (rotation.id !== rotationId) return rotation;
-        const currentPersonId = rotation.queue[rotation.currentIndex];
-        return {
-          ...rotation,
-          currentIndex: (rotation.currentIndex + 1) % rotation.queue.length,
-          history: [
-            { personId: currentPersonId, completedAt: new Date().toISOString(), note: "Hecho" },
-            ...rotation.history
-          ]
-        };
-      })
-    );
+  async function handleCreateRotation(input: {
+    title: string;
+    cadence: string;
+    icon: RotationIcon;
+    queue: string[];
+  }) {
+    await apiCreateRotation(hid, input);
+    await reloadRotations();
+  }
+  async function handleCompleteRotation(rotation: Rotation) {
+    await apiCompleteRotation(rotation);
+    await reloadRotations();
+  }
+  async function handleCreateSlot(input: { personId: string; day: number; start: string; end: string }) {
+    await apiCreateSlot(hid, input);
+    await reloadSlots();
   }
 
   return (
@@ -1631,44 +1550,57 @@ export function NestLoopApp({
             pendingCount={pendingCount}
           />
 
-          {activeView === "home" ? (
-            <HomeView
-              currentUser={currentUser}
-              expenses={expenses}
-              rotations={rotations}
-              setActiveExpenseId={setActiveExpenseId}
-              setActiveView={setActiveView}
-            />
-          ) : null}
+          {loading ? (
+            <div className="empty-state">
+              <span className="loading-mark small">
+                <RotateCw size={22} />
+              </span>
+              <strong>Cargando tu casa…</strong>
+            </div>
+          ) : loadError ? (
+            <div className="empty-state">
+              <Database size={28} />
+              <strong>No se pudo cargar</strong>
+              <span>Revisa tu conexión y vuelve a abrir la app.</span>
+            </div>
+          ) : (
+            <>
+              {activeView === "home" ? (
+                <HomeView
+                  currentUser={currentUser}
+                  expenses={expenses}
+                  rotations={rotations}
+                  setActiveExpenseId={setActiveExpenseId}
+                  setActiveView={setActiveView}
+                />
+              ) : null}
 
-          {activeView === "expenses" ? (
-            <ExpensesView
-              currentUser={currentUser}
-              expenses={expenses}
-              onCreate={createExpense}
-              setActiveExpenseId={setActiveExpenseId}
-            />
-          ) : null}
+              {activeView === "expenses" ? (
+                <ExpensesView
+                  currentUser={currentUser}
+                  expenses={expenses}
+                  onCreate={handleCreateExpense}
+                  setActiveExpenseId={setActiveExpenseId}
+                />
+              ) : null}
 
-          {activeView === "tasks" ? (
-            <TasksView
-              rotations={rotations}
-              onComplete={completeRotation}
-              onCreate={(rotation) => setRotations((current) => [...current, rotation])}
-            />
-          ) : null}
+              {activeView === "tasks" ? (
+                <TasksView
+                  rotations={rotations}
+                  onComplete={handleCompleteRotation}
+                  onCreate={handleCreateRotation}
+                />
+              ) : null}
 
-          {activeView === "calendar" ? (
-            <CalendarView
-              currentUser={currentUser}
-              slots={slots}
-              onCreate={(slot) => setSlots((current) => [...current, slot])}
-            />
-          ) : null}
+              {activeView === "calendar" ? (
+                <CalendarView currentUser={currentUser} slots={slots} onCreate={handleCreateSlot} />
+              ) : null}
 
-          {activeView === "people" ? (
-            <PeopleView expenses={expenses} household={household} rotations={rotations} />
-          ) : null}
+              {activeView === "people" ? (
+                <PeopleView expenses={expenses} household={household} rotations={rotations} />
+              ) : null}
+            </>
+          )}
         </div>
 
         {activeExpense ? (
@@ -1676,9 +1608,9 @@ export function NestLoopApp({
             currentUser={currentUser}
             expense={activeExpense}
             onClose={() => setActiveExpenseId(null)}
-            onConfirm={confirmPayment}
-            onMarkPaid={markPaid}
-            onReject={rejectPayment}
+            onConfirm={handleConfirm}
+            onMarkPaid={handleMarkPaid}
+            onReject={handleReject}
           />
         ) : null}
       </main>
