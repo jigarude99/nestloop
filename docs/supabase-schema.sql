@@ -95,23 +95,43 @@ alter table public.task_rotation_members enable row level security;
 alter table public.task_events enable row level security;
 alter table public.schedule_slots enable row level security;
 
+create or replace function public.is_household_member(target_household_id uuid)
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select exists (
+    select 1
+    from public.household_members hm
+    where hm.household_id = target_household_id
+      and hm.profile_id = auth.uid()
+  );
+$$;
+
+create or replace function public.can_read_expense(target_expense_id uuid)
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select exists (
+    select 1
+    from public.expenses e
+    where e.id = target_expense_id
+      and public.is_household_member(e.household_id)
+  );
+$$;
+
 create policy "members can read their households"
 on public.households for select
-using (
-  exists (
-    select 1 from public.household_members hm
-    where hm.household_id = id and hm.profile_id = auth.uid()
-  )
-);
+using (public.is_household_member(id));
 
 create policy "members can read household members"
 on public.household_members for select
-using (
-  exists (
-    select 1 from public.household_members mine
-    where mine.household_id = household_id and mine.profile_id = auth.uid()
-  )
-);
+using (public.is_household_member(household_id));
 
 create policy "members can read profiles in their households"
 on public.profiles for select
@@ -119,43 +139,26 @@ using (
   id = auth.uid()
   or exists (
     select 1
-    from public.household_members mine
-    join public.household_members other_member
-      on other_member.household_id = mine.household_id
-    where mine.profile_id = auth.uid()
+    from public.household_members other_member
+    where public.is_household_member(other_member.household_id)
       and other_member.profile_id = profiles.id
   )
 );
 
 create policy "members can read household expenses"
 on public.expenses for select
-using (
-  exists (
-    select 1 from public.household_members hm
-    where hm.household_id = household_id and hm.profile_id = auth.uid()
-  )
-);
+using (public.is_household_member(household_id));
 
 create policy "members can create household expenses"
 on public.expenses for insert
 with check (
   created_by = auth.uid()
-  and exists (
-    select 1 from public.household_members hm
-    where hm.household_id = household_id and hm.profile_id = auth.uid()
-  )
+  and public.is_household_member(household_id)
 );
 
 create policy "members can read expense shares"
 on public.expense_shares for select
-using (
-  exists (
-    select 1
-    from public.expenses e
-    join public.household_members hm on hm.household_id = e.household_id
-    where e.id = expense_id and hm.profile_id = auth.uid()
-  )
-);
+using (public.can_read_expense(expense_id));
 
 create policy "participants can update their own share"
 on public.expense_shares for update
