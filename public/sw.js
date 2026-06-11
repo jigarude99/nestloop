@@ -1,5 +1,5 @@
-const CACHE_NAME = "nestloop-v3";
-const APP_SHELL = ["/", "/manifest.json", "/icon.svg"];
+const CACHE_NAME = "nestloop-v4";
+const APP_SHELL = ["/", "/manifest.json", "/icon-192.png", "/icon-512.png"];
 
 self.addEventListener("install", (event) => {
   self.skipWaiting();

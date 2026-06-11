@@ -1,5 +1,6 @@
-/** Logo de NestLoop: una casa (nido) dentro de un bucle, coronada por un sol.
- *  Mismo diseño que el ícono de la app instalada (public/icon.svg). */
+/** Logo minimalista de NestLoop para el encabezado dentro de la app
+ *  (casa dentro de un bucle con un sol). Se mantiene simple porque se
+ *  muestra muy pequeño; el ícono de la app instalada es la imagen a color. */
 export function BrandGlyph({ size = 26 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 512 512" fill="none" aria-hidden="true">
