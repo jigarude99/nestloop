@@ -1,8 +1,9 @@
 "use client";
 
 import { FormEvent, useState } from "react";
-import { Home, KeyRound, LogOut, Plus } from "lucide-react";
+import { KeyRound, LogOut, Plus } from "lucide-react";
 import { useAuth } from "./AuthProvider";
+import { BrandGlyph } from "./BrandGlyph";
 
 type Mode = "create" | "join";
 
@@ -40,7 +41,7 @@ export function HouseholdSetup() {
       <div className="auth-card">
         <div className="auth-brand">
           <span className="brand-mark">
-            <Home size={22} />
+            <BrandGlyph size={28} />
           </span>
           <div>
             <strong>{firstName ? `Hola, ${firstName}` : "Tu casa"}</strong>

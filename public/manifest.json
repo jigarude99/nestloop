@@ -1,7 +1,9 @@
 {
   "name": "NestLoop",
   "short_name": "NestLoop",
-  "description": "Shared home expenses, turns, chores, and payment proofs.",
+  "description": "La casa organizada: gastos compartidos, turnos, tareas y comprobantes de pago.",
+  "lang": "es",
+  "dir": "ltr",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
@@ -11,9 +13,15 @@
   "icons": [
     {
       "src": "/icon.svg",
-      "sizes": "any",
+      "sizes": "512x512",
       "type": "image/svg+xml",
-      "purpose": "any maskable"
+      "purpose": "any"
+    },
+    {
+      "src": "/icon.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
     }
   ]
 }

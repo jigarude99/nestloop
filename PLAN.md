@@ -148,13 +148,30 @@ Durante esta fase:
 
 **Diferido a futuro (no bloquea):** dividir `NestLoopApp.tsx` en archivos por vista (sigue siendo monolito, ~1300 líneas) y Realtime de Supabase (hoy se recarga tras cada acción; suficiente para v1). Mostrar comprobantes de pago con `SignedImage` en cada fila (hoy solo se muestra la factura del gasto).
 
-### Fase 10 — Entrega a la familia
+### Fase 10 — Entrega a la familia 🟡 EN CURSO (2026-06-11)
 
-1. Crear las cuentas reales de cada miembro.
-2. Borrar datos demo/de prueba.
+Hecho por código:
+- **Logo unificado y rediseñado**: una casa (nido) dentro de un bucle, coronada por un sol, en `public/icon.svg` (ícono instalado/PWA + favicon) y en `components/BrandGlyph.tsx` (logo dentro de la app). Antes había dos diseños distintos (nube+más vs. flecha-bucle); ahora los tres lugares (instalado, navegador, dentro de la app) usan el mismo. Se quitó el sol duplicado del CSS de `.brand-mark`. `manifest.json` en español, con purposes `any` + `maskable`.
+- **Guía de ayuda en español** dentro de la app: botón "?" en la barra superior abre un modal con 6 pasos (agregar gasto, pagar, confirmar efectivo, turnos, lavadora, invitar). Verificado visualmente en móvil.
+- Base de datos dejada **impecable** (0 datos) para el primer registro real del usuario.
+
+Pendiente (acciones del usuario, no código):
+1. Desactivar "Confirm email" en Supabase (1 clic) para registro sin fricción.
+2. El admin crea su cuenta + casa y comparte el código; cada miembro se registra y se une.
+3. Instalar como app (Add to Home Screen) en los teléfonos y prueba guiada con un gasto real.
+
+<details><summary>Plan original de la Fase 10 (referencia)</summary>
+
+> **Onboarding = autoservicio con código de invitación** (decidido en Fase 8). El admin NO crea cuentas ajenas (requeriría service_role, inseguro en cliente). Cada miembro crea su propia cuenta y se une con el código de 6 caracteres.
+
+1. El admin crea su cuenta + la casa, y comparte el código de invitación con la familia.
+2. Cada miembro se registra solo y entra el código (con ayuda presencial del admin si hace falta).
 3. Verificar deploy final en Vercel y la instalación PWA en iPhone y Android (Add to Home Screen).
 4. Mini-guía visual en español (puede ser una página `/ayuda` dentro de la app) con: cómo entrar, cómo poner un gasto, cómo pagar, cómo confirmar efectivo, cómo marcar el turno del agua.
 5. Prueba guiada con un gasto real de la casa.
+6. (Recordatorio) Desactivar "Confirm email" en Supabase para que el registro sea sin fricción.
+
+</details>
 
 ---
 

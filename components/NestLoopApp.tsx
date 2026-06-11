@@ -13,8 +13,10 @@ import {
   Database,
   Droplets,
   HandCoins,
+  HelpCircle,
   Home,
   KeyRound,
+  LifeBuoy,
   LogOut,
   LucideIcon,
   Plus,
@@ -40,6 +42,7 @@ import {
 } from "react";
 import { hasSupabaseConfig } from "../lib/supabase";
 import { Household, Person } from "../lib/household";
+import { BrandGlyph } from "./BrandGlyph";
 import {
   createExpense as apiCreateExpense,
   createRotation as apiCreateRotation,
@@ -223,7 +226,7 @@ function AppNav({
     <nav className="app-nav" aria-label="Navegación principal">
       <div className="brand-lockup">
         <span className="brand-mark">
-          <RotateCw size={20} />
+          <BrandGlyph size={26} />
         </span>
         <div>
           <strong>NestLoop</strong>
@@ -255,12 +258,14 @@ function TopBar({
   currentUser,
   household,
   pendingCount,
-  onSignOut
+  onSignOut,
+  onHelp
 }: {
   currentUser: Person;
   household: Household;
   pendingCount: number;
   onSignOut: () => void;
+  onHelp: () => void;
 }) {
   const [copied, setCopied] = useState(false);
 
@@ -279,7 +284,7 @@ function TopBar({
     <header className="top-bar">
       <div className="mobile-brand">
         <span className="brand-mark">
-          <RotateCw size={18} />
+          <BrandGlyph size={22} />
         </span>
         <strong>NestLoop</strong>
       </div>
@@ -305,6 +310,9 @@ function TopBar({
         <span className="notification-pill" aria-label={`${pendingCount} pendientes`}>
           {pendingCount}
         </span>
+        <button className="icon-button" onClick={onHelp} type="button" aria-label="Ayuda">
+          <HelpCircle size={18} />
+        </button>
         <button className="icon-button" onClick={onSignOut} type="button" aria-label="Cerrar sesión">
           <LogOut size={18} />
         </button>
@@ -1410,6 +1418,78 @@ function PeopleView({
   );
 }
 
+function HelpSheet({ household, onClose }: { household: Household; onClose: () => void }) {
+  const steps: { icon: LucideIcon; tone: string; title: string; body: string }[] = [
+    {
+      icon: ReceiptText,
+      tone: "coral",
+      title: "Agregar un gasto",
+      body: "Toca “Agregar gasto”, pon el total, elige quién pagó y entre quiénes se divide. Puedes adjuntar la foto de la factura."
+    },
+    {
+      icon: CreditCard,
+      tone: "sun",
+      title: "Pagar lo que debes",
+      body: "Abre el gasto y toca “Marcar pagado”. Si pagaste por transferencia, sube la captura. Si fue en efectivo, queda esperando que confirmen."
+    },
+    {
+      icon: ShieldCheck,
+      tone: "mint",
+      title: "Confirmar un pago en efectivo",
+      body: "Cuando alguien te paga en efectivo, te aparece “Por aprobar”. Tú tocas “Aceptar” (o “Rechazar” si hay un error)."
+    },
+    {
+      icon: RotateCw,
+      tone: "sky",
+      title: "Turnos (como el agua)",
+      body: "En “Turnos” creas la lista. Cuando alguien cumple su turno, toca “Marcar hecho” y le pasa al siguiente automáticamente."
+    },
+    {
+      icon: CalendarDays,
+      tone: "violet",
+      title: "Horario de lavadora",
+      body: "En “Lavadora” agregas a cada persona su día y su hora. Así nadie choca."
+    },
+    {
+      icon: Users,
+      tone: "mint",
+      title: "Invitar a tu familia",
+      body: `Comparte el código ${household.invite_code ?? ""} de la casa. Cada persona crea su cuenta y elige “Unirme con código”.`
+    }
+  ];
+
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <div className="modal-sheet help-sheet">
+        <div className="modal-header">
+          <div>
+            <p className="eyebrow">Guía rápida</p>
+            <h2>¿Cómo se usa NestLoop?</h2>
+          </div>
+          <button className="icon-button" onClick={onClose} type="button" aria-label="Cerrar">
+            <X size={20} />
+          </button>
+        </div>
+        <div className="help-list">
+          {steps.map((step) => (
+            <div className="help-step" key={step.title}>
+              <IconBubble icon={step.icon} tone={step.tone} />
+              <div>
+                <strong>{step.title}</strong>
+                <span>{step.body}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+        <button className="primary-action full" onClick={onClose} type="button">
+          <LifeBuoy size={19} />
+          Entendido
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Componente raíz
 // ---------------------------------------------------------------------------
@@ -1429,6 +1509,7 @@ export function NestLoopApp({
   const [rotations, setRotations] = useState<Rotation[]>([]);
   const [slots, setSlots] = useState<ScheduleSlot[]>([]);
   const [activeExpenseId, setActiveExpenseId] = useState<string | null>(null);
+  const [showHelp, setShowHelp] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
 
@@ -1546,6 +1627,7 @@ export function NestLoopApp({
           <TopBar
             currentUser={currentUser}
             household={household}
+            onHelp={() => setShowHelp(true)}
             onSignOut={onSignOut}
             pendingCount={pendingCount}
           />
@@ -1613,6 +1695,8 @@ export function NestLoopApp({
             onReject={handleReject}
           />
         ) : null}
+
+        {showHelp ? <HelpSheet household={household} onClose={() => setShowHelp(false)} /> : null}
       </main>
     </AppDataContext.Provider>
   );

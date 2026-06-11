@@ -97,9 +97,7 @@ button:disabled {
   place-items: center;
   border: 1px solid rgba(23, 32, 27, 0.08);
   border-radius: var(--radius);
-  background:
-    radial-gradient(circle at 70% 20%, var(--sun) 0 18%, transparent 19%),
-    linear-gradient(135deg, var(--ink), #243229);
+  background: linear-gradient(135deg, #1d2822, #11170f);
   color: white;
 }
 
@@ -1459,4 +1457,37 @@ textarea:focus {
   .top-greeting {
     display: none;
   }
+}
+
+/* Guía de ayuda (Fase 10) */
+.help-sheet {
+  width: min(560px, 100%);
+}
+
+.help-list {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.help-step {
+  display: flex;
+  gap: 13px;
+  align-items: flex-start;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fbfcf8;
+  padding: 13px 14px;
+}
+
+.help-step strong {
+  display: block;
+  margin-bottom: 2px;
+  font-size: 15px;
+}
+
+.help-step span {
+  color: var(--muted);
+  font-size: 13.5px;
+  line-height: 1.5;
 }

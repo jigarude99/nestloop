@@ -1,8 +1,9 @@
 "use client";
 
 import { FormEvent, useState } from "react";
-import { LogIn, Mail, RotateCw, UserPlus } from "lucide-react";
+import { LogIn, Mail, UserPlus } from "lucide-react";
 import { useAuth } from "./AuthProvider";
+import { BrandGlyph } from "./BrandGlyph";
 
 type Mode = "signin" | "signup";
 
@@ -49,7 +50,7 @@ export function AuthScreen() {
       <div className="auth-card">
         <div className="auth-brand">
           <span className="brand-mark">
-            <RotateCw size={22} />
+            <BrandGlyph size={28} />
           </span>
           <div>
             <strong>NestLoop</strong>
