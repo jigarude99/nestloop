@@ -1,4 +1,4 @@
-const CACHE_NAME = "nestloop-v5";
+const CACHE_NAME = "nestloop-v6";
 const APP_SHELL = [
   "/",
   "/manifest.json",
@@ -6,6 +6,7 @@ const APP_SHELL = [
   "/icon-192.png",
   "/icon-512.png",
   "/icon-512-maskable.png",
+  "/icon.svg",
   "/icon.png"
 ];
 

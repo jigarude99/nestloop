@@ -1,22 +1,3 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <defs>
-    <linearGradient id="nlbg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#1d2822"/>
-      <stop offset="1" stop-color="#11170f"/>
-    </linearGradient>
-    <radialGradient id="nlglow" cx="0.5" cy="0.42" r="0.55">
-      <stop offset="0" stop-color="#0f9f7a" stop-opacity="0.22"/>
-      <stop offset="1" stop-color="#0f9f7a" stop-opacity="0"/>
-    </radialGradient>
-  </defs>
-  <rect width="512" height="512" rx="116" fill="url(#nlbg)"/>
-  <rect width="512" height="512" rx="116" fill="url(#nlglow)"/>
-  <!-- Bucle (el "Loop"): anillo abierto que sugiere los turnos rotando -->
-  <path d="M290 110 A150 150 0 1 1 222 110" fill="none" stroke="#0f9f7a" stroke-width="30" stroke-linecap="round"/>
-  <!-- Sol cálido en la cima del bucle -->
-  <circle cx="256" cy="100" r="32" fill="#f6c64f"/>
-  <!-- Casa (el "Nest"): nido del hogar dentro del bucle -->
-  <path d="M194 248 L256 190 L318 248 Z" fill="#f7f8f4"/>
-  <rect x="206" y="244" width="100" height="96" rx="14" fill="#f7f8f4"/>
-  <rect x="239" y="292" width="34" height="48" rx="9" fill="#0f9f7a"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="NestLoop">
+  <image href="/icon-512.png" width="512" height="512" preserveAspectRatio="xMidYMid slice"/>
 </svg>
