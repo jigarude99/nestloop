@@ -19,12 +19,16 @@ import {
   LifeBuoy,
   LogOut,
   LucideIcon,
+  MoreVertical,
+  Pencil,
   Plus,
   ReceiptText,
   RotateCcw,
   RotateCw,
   ShieldCheck,
   Sparkles,
+  Trash2,
+  Undo2,
   Upload,
   Users,
   WalletCards,
@@ -38,6 +42,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState
 } from "react";
 import { hasSupabaseConfig } from "../lib/supabase";
@@ -48,14 +53,24 @@ import {
   createRotation as apiCreateRotation,
   createSlot as apiCreateSlot,
   completeRotation as apiCompleteRotation,
+  deleteExpense as apiDeleteExpense,
+  deleteRotation as apiDeleteRotation,
+  deleteSlot as apiDeleteSlot,
+  displayTime,
   fetchExpenses,
   fetchRotations,
   fetchSlots,
   markSharePaid,
   setShareStatus,
   signedUrl,
+  undoRotation as apiUndoRotation,
+  updateExpense as apiUpdateExpense,
+  updateRotation as apiUpdateRotation,
+  updateSlot as apiUpdateSlot,
   type Expense,
   type NewExpenseInput,
+  type NewRotationInput,
+  type NewSlotInput,
   type PaymentMethod,
   type PaymentStatus,
   type Rotation,
@@ -72,7 +87,7 @@ const NAV_ITEMS: NavItem[] = [
   { view: "home", label: "Inicio", icon: Home },
   { view: "expenses", label: "Gastos", icon: ReceiptText },
   { view: "tasks", label: "Turnos", icon: RotateCw },
-  { view: "calendar", label: "Lavadora", icon: CalendarDays },
+  { view: "calendar", label: "Horarios", icon: CalendarDays },
   { view: "people", label: "Personas", icon: Users }
 ];
 
@@ -152,6 +167,30 @@ function methodLabel(method?: PaymentMethod) {
   return undefined;
 }
 
+/** Mantener apretado (o clic derecho) para abrir el menú de acciones. */
+function useLongPress(onLongPress: () => void, ms = 500) {
+  const timer = useRef<number | null>(null);
+  const clear = () => {
+    if (timer.current) {
+      window.clearTimeout(timer.current);
+      timer.current = null;
+    }
+  };
+  return {
+    onPointerDown: () => {
+      clear();
+      timer.current = window.setTimeout(onLongPress, ms);
+    },
+    onPointerUp: clear,
+    onPointerLeave: clear,
+    onPointerCancel: clear,
+    onContextMenu: (e: React.MouseEvent) => {
+      e.preventDefault();
+      onLongPress();
+    }
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Piezas visuales reutilizables
 // ---------------------------------------------------------------------------
@@ -213,6 +252,69 @@ function SignedImage({
   }, [bucket, path]);
   if (!url) return null;
   return <img className="receipt-img" src={url} alt={alt} />;
+}
+
+/** Hoja de acciones (Editar / Eliminar) con confirmación de borrado. */
+function ItemActionsSheet({
+  eyebrow,
+  title,
+  onEdit,
+  onDelete,
+  onClose
+}: {
+  eyebrow: string;
+  title: string;
+  onEdit?: () => void;
+  onDelete: () => Promise<void>;
+  onClose: () => void;
+}) {
+  const [confirm, setConfirm] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  async function doDelete() {
+    setBusy(true);
+    try {
+      await onDelete();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="modal-backdrop" role="presentation" onClick={onClose}>
+      <div className="modal-sheet actions-sheet" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <div>
+            <p className="eyebrow">{eyebrow}</p>
+            <h2>{title}</h2>
+          </div>
+          <button className="icon-button" onClick={onClose} type="button" aria-label="Cerrar">
+            <X size={20} />
+          </button>
+        </div>
+        {onEdit ? (
+          <button className="secondary-action full" onClick={onEdit} type="button">
+            <Pencil size={18} />
+            Editar
+          </button>
+        ) : null}
+        {!confirm ? (
+          <button className="danger-action full" onClick={() => setConfirm(true)} type="button">
+            <Trash2 size={18} />
+            Eliminar
+          </button>
+        ) : (
+          <button className="danger-action full" disabled={busy} onClick={doDelete} type="button">
+            <Trash2 size={18} />
+            {busy ? "Eliminando…" : "Sí, eliminar definitivamente"}
+          </button>
+        )}
+        <button className="ghost-action full" onClick={onClose} type="button">
+          Cancelar
+        </button>
+      </div>
+    </div>
+  );
 }
 
 function AppNav({
@@ -554,28 +656,41 @@ function ExpenseCard({ expense, onOpen }: { expense: Expense; onOpen: (id: strin
 
 function ExpenseForm({
   currentUser,
+  initial,
   onClose,
-  onCreate
+  onSubmit
 }: {
   currentUser: Person;
+  initial?: Expense | null;
   onClose: () => void;
-  onCreate: (input: NewExpenseInput) => Promise<void>;
+  onSubmit: (input: NewExpenseInput) => Promise<void>;
 }) {
   const { people } = useApp();
-  const [title, setTitle] = useState("Compra compartida");
-  const [merchant, setMerchant] = useState("");
-  const [category, setCategory] = useState(CATEGORIES[0]);
-  const [amount, setAmount] = useState("");
-  const [paidBy, setPaidBy] = useState(currentUser.id);
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const isEdit = !!initial;
+  const initialShares = initial
+    ? Object.fromEntries(initial.shares.map((s) => [s.personId, s.amount]))
+    : null;
+
+  const [title, setTitle] = useState(initial?.title ?? "Compra compartida");
+  const [merchant, setMerchant] = useState(initial?.merchant ?? "");
+  const [category, setCategory] = useState(initial?.category ?? CATEGORIES[0]);
+  const [amount, setAmount] = useState(initial ? String(initial.amount) : "");
+  const [paidBy, setPaidBy] = useState(initial?.paidBy ?? currentUser.id);
+  const [date, setDate] = useState(initial?.purchasedAt ?? new Date().toISOString().slice(0, 10));
   const [receiptFile, setReceiptFile] = useState<File | null>(null);
-  const [note, setNote] = useState("");
-  const [splitMode, setSplitMode] = useState<SplitMode>("equal");
+  const [note, setNote] = useState(initial?.note ?? "");
+  const [splitMode, setSplitMode] = useState<SplitMode>(() => {
+    if (!initial || !initial.shares.length) return "equal";
+    const amts = initial.shares.map((s) => s.amount);
+    return amts.every((a) => Math.abs(a - amts[0]) < 0.01) ? "equal" : "custom";
+  });
   const [selected, setSelected] = useState<Record<string, boolean>>(() =>
-    Object.fromEntries(people.map((person) => [person.id, true]))
+    Object.fromEntries(people.map((p) => [p.id, initialShares ? p.id in initialShares : true]))
   );
   const [customAmounts, setCustomAmounts] = useState<Record<string, string>>(() =>
-    Object.fromEntries(people.map((person) => [person.id, ""]))
+    Object.fromEntries(
+      people.map((p) => [p.id, initialShares && p.id in initialShares ? String(initialShares[p.id]) : ""])
+    )
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -603,7 +718,7 @@ function ExpenseForm({
     }));
 
     try {
-      await onCreate({
+      await onSubmit({
         title: title.trim(),
         merchant: merchant.trim(),
         category,
@@ -626,8 +741,8 @@ function ExpenseForm({
       <form className="modal-sheet expense-form" onSubmit={submit}>
         <div className="modal-header">
           <div>
-            <p className="eyebrow">Nuevo gasto</p>
-            <h2>Agrega un gasto compartido</h2>
+            <p className="eyebrow">{isEdit ? "Editar" : "Nuevo gasto"}</p>
+            <h2>{isEdit ? "Editar gasto" : "Agrega un gasto compartido"}</h2>
           </div>
           <button className="icon-button" onClick={onClose} type="button" aria-label="Cerrar">
             <X size={20} />
@@ -673,7 +788,7 @@ function ExpenseForm({
 
         <label className="file-pick">
           <Camera size={19} />
-          <span>{receiptFile?.name || "Adjuntar foto de la factura"}</span>
+          <span>{receiptFile?.name || (isEdit && initial?.receiptPath ? "Cambiar foto de la factura" : "Adjuntar foto de la factura")}</span>
           <input
             type="file"
             accept="image/*"
@@ -739,11 +854,15 @@ function ExpenseForm({
           </div>
         ) : null}
 
+        {isEdit ? (
+          <p className="form-hint">Al editar el monto o las personas, los pagos de este gasto se reinician.</p>
+        ) : null}
+
         {error ? <div className="auth-alert error">{error}</div> : null}
 
         <button className="primary-action full" disabled={!canSubmit || saving} type="submit">
           <Plus size={19} />
-          {saving ? "Guardando…" : "Crear gasto"}
+          {saving ? "Guardando…" : isEdit ? "Guardar cambios" : "Crear gasto"}
         </button>
       </form>
     </div>
@@ -756,7 +875,9 @@ function ExpenseDetail({
   onClose,
   onMarkPaid,
   onConfirm,
-  onReject
+  onReject,
+  onEdit,
+  onDelete
 }: {
   expense: Expense;
   currentUser: Person;
@@ -764,18 +885,22 @@ function ExpenseDetail({
   onMarkPaid: (expenseId: string, personId: string, method: PaymentMethod, proofFile: File | null) => Promise<void>;
   onConfirm: (expenseId: string, personId: string) => Promise<void>;
   onReject: (expenseId: string, personId: string) => Promise<void>;
+  onEdit: (expense: Expense) => void;
+  onDelete: (expense: Expense) => Promise<void>;
 }) {
   const { getPerson } = useApp();
   const [method, setMethod] = useState<PaymentMethod>("transfer");
   const [proofFile, setProofFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const payer = getPerson(expense.paidBy);
   const currentShare = expense.shares.find((share) => share.personId === currentUser.id);
   const needsProof = method !== "cash";
   const canSendPayment =
     !!currentShare && currentShare.status !== "confirmed" && (!needsProof || !!proofFile) && !busy;
+  const canManage = expense.createdBy === currentUser.id || expense.paidBy === currentUser.id;
 
   async function run(action: () => Promise<void>) {
     setBusy(true);
@@ -912,6 +1037,31 @@ function ExpenseDetail({
 
         {error ? <div className="auth-alert error">{error}</div> : null}
 
+        {canManage ? (
+          <div className="detail-actions">
+            <button className="secondary-action" onClick={() => onEdit(expense)} type="button">
+              <Pencil size={18} />
+              Editar
+            </button>
+            {!confirmDelete ? (
+              <button className="danger-action" onClick={() => setConfirmDelete(true)} type="button">
+                <Trash2 size={18} />
+                Eliminar
+              </button>
+            ) : (
+              <button
+                className="danger-action"
+                disabled={busy}
+                onClick={() => run(() => onDelete(expense))}
+                type="button"
+              >
+                <Trash2 size={18} />
+                {busy ? "Eliminando…" : "Sí, eliminar"}
+              </button>
+            )}
+          </div>
+        ) : null}
+
         <div className="timeline-note">
           <Clock3 size={17} />
           <span>Agregado {relativeDate(expense.createdAt)}</span>
@@ -962,7 +1112,7 @@ function ExpensesView({
       )}
 
       {showForm ? (
-        <ExpenseForm currentUser={currentUser} onClose={() => setShowForm(false)} onCreate={onCreate} />
+        <ExpenseForm currentUser={currentUser} onClose={() => setShowForm(false)} onSubmit={onCreate} />
       ) : null}
     </section>
   );
@@ -970,33 +1120,56 @@ function ExpensesView({
 
 function RotationCard({
   rotation,
-  onComplete
+  onComplete,
+  onUndo,
+  onEdit,
+  onDelete
 }: {
   rotation: Rotation;
   onComplete: (rotation: Rotation) => Promise<void>;
+  onUndo: (rotation: Rotation) => Promise<void>;
+  onEdit: (rotation: Rotation) => void;
+  onDelete: (rotation: Rotation) => Promise<void>;
 }) {
-  const { getPerson } = useApp();
+  const { getPerson, currentUserId } = useApp();
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [showActions, setShowActions] = useState(false);
+  const longPress = useLongPress(() => setShowActions(true));
+
   const Icon = rotationIcon(rotation.icon);
   const currentPerson = getPerson(rotation.queue[rotation.currentIndex]);
+  const isMyTurn = rotation.queue[rotation.currentIndex] === currentUserId;
+  const canUndo = rotation.history[0]?.personId === currentUserId;
 
-  async function complete() {
+  async function run(action: () => Promise<void>) {
     setBusy(true);
+    setError(null);
     try {
-      await onComplete(rotation);
+      await action();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudo. Intenta de nuevo.");
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <article className="rotation-card">
+    <article className="rotation-card" {...longPress}>
       <div className="rotation-top">
         <IconBubble icon={Icon} tone="sky" />
         <div>
           <strong>{rotation.title}</strong>
           <span>{rotation.cadence}</span>
         </div>
+        <button
+          className="more-button"
+          onClick={() => setShowActions(true)}
+          type="button"
+          aria-label="Opciones del turno"
+        >
+          <MoreVertical size={18} />
+        </button>
       </div>
       <div className="current-turn">
         <Avatar person={currentPerson} size="lg" />
@@ -1017,10 +1190,33 @@ function RotationCard({
           );
         })}
       </div>
-      <button className="secondary-action full" disabled={busy} onClick={complete} type="button">
-        <CheckCircle2 size={19} />
-        {busy ? "Guardando…" : "Marcar hecho"}
-      </button>
+
+      {isMyTurn ? (
+        <button
+          className="secondary-action full"
+          disabled={busy}
+          onClick={() => run(() => onComplete(rotation))}
+          type="button"
+        >
+          <CheckCircle2 size={19} />
+          {busy ? "Guardando…" : "Marcar hecho"}
+        </button>
+      ) : (
+        <button className="secondary-action full" disabled type="button">
+          <Clock3 size={19} />
+          Le toca a {currentPerson.shortName}
+        </button>
+      )}
+
+      {canUndo ? (
+        <button className="undo-link" disabled={busy} onClick={() => run(() => onUndo(rotation))} type="button">
+          <Undo2 size={15} />
+          Deshacer mi turno
+        </button>
+      ) : null}
+
+      {error ? <div className="auth-alert error">{error}</div> : null}
+
       <div className="history-list">
         {rotation.history.slice(0, 2).map((event) => (
           <div key={`${event.personId}-${event.completedAt}`}>
@@ -1029,23 +1225,39 @@ function RotationCard({
           </div>
         ))}
       </div>
+
+      {showActions ? (
+        <ItemActionsSheet
+          eyebrow="Turno"
+          title={rotation.title}
+          onClose={() => setShowActions(false)}
+          onEdit={() => {
+            setShowActions(false);
+            onEdit(rotation);
+          }}
+          onDelete={() => onDelete(rotation)}
+        />
+      ) : null}
     </article>
   );
 }
 
 function RotationForm({
+  initial,
   onClose,
-  onCreate
+  onSubmit
 }: {
+  initial?: Rotation | null;
   onClose: () => void;
-  onCreate: (input: { title: string; cadence: string; icon: RotationIcon; queue: string[] }) => Promise<void>;
+  onSubmit: (input: NewRotationInput) => Promise<void>;
 }) {
   const { people } = useApp();
-  const [title, setTitle] = useState("Comprar agua");
-  const [cadence, setCadence] = useState("Cuando se acaba");
-  const [icon, setIcon] = useState<RotationIcon>("water");
+  const isEdit = !!initial;
+  const [title, setTitle] = useState(initial?.title ?? "Comprar agua");
+  const [cadence, setCadence] = useState(initial?.cadence ?? "Cuando se acaba");
+  const [icon, setIcon] = useState<RotationIcon>(initial?.icon ?? "water");
   const [queue, setQueue] = useState<Record<string, boolean>>(() =>
-    Object.fromEntries(people.map((p) => [p.id, true]))
+    Object.fromEntries(people.map((p) => [p.id, initial ? initial.queue.includes(p.id) : true]))
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1058,7 +1270,7 @@ function RotationForm({
     setSaving(true);
     setError(null);
     try {
-      await onCreate({
+      await onSubmit({
         title: title.trim(),
         cadence: cadence.trim() || "Por turnos",
         icon,
@@ -1066,7 +1278,7 @@ function RotationForm({
       });
       onClose();
     } catch {
-      setError("No se pudo crear el turno. Intenta de nuevo.");
+      setError("No se pudo guardar el turno. Intenta de nuevo.");
       setSaving(false);
     }
   }
@@ -1076,8 +1288,8 @@ function RotationForm({
       <form className="modal-sheet schedule-form" onSubmit={submit}>
         <div className="modal-header">
           <div>
-            <p className="eyebrow">Nuevo turno</p>
-            <h2>Crear un turno rotativo</h2>
+            <p className="eyebrow">{isEdit ? "Editar" : "Nuevo turno"}</p>
+            <h2>{isEdit ? "Editar turno" : "Crear un turno rotativo"}</h2>
           </div>
           <button className="icon-button" onClick={onClose} type="button" aria-label="Cerrar">
             <X size={20} />
@@ -1123,7 +1335,7 @@ function RotationForm({
         {error ? <div className="auth-alert error">{error}</div> : null}
         <button className="primary-action full" type="submit" disabled={!title.trim() || !chosen.length || saving}>
           <Plus size={19} />
-          {saving ? "Guardando…" : "Crear turno"}
+          {saving ? "Guardando…" : isEdit ? "Guardar cambios" : "Crear turno"}
         </button>
       </form>
     </div>
@@ -1133,13 +1345,20 @@ function RotationForm({
 function TasksView({
   rotations,
   onComplete,
-  onCreate
+  onUndo,
+  onCreate,
+  onUpdate,
+  onDelete
 }: {
   rotations: Rotation[];
   onComplete: (rotation: Rotation) => Promise<void>;
-  onCreate: (input: { title: string; cadence: string; icon: RotationIcon; queue: string[] }) => Promise<void>;
+  onUndo: (rotation: Rotation) => Promise<void>;
+  onCreate: (input: NewRotationInput) => Promise<void>;
+  onUpdate: (id: string, input: NewRotationInput) => Promise<void>;
+  onDelete: (id: string) => Promise<void>;
 }) {
   const [showForm, setShowForm] = useState(false);
+  const [editing, setEditing] = useState<Rotation | null>(null);
 
   return (
     <section className="view-stack">
@@ -1156,7 +1375,14 @@ function TasksView({
       {rotations.length ? (
         <div className="rotation-grid">
           {rotations.map((rotation) => (
-            <RotationCard key={rotation.id} rotation={rotation} onComplete={onComplete} />
+            <RotationCard
+              key={rotation.id}
+              rotation={rotation}
+              onComplete={onComplete}
+              onUndo={onUndo}
+              onEdit={setEditing}
+              onDelete={(r) => onDelete(r.id)}
+            />
           ))}
         </div>
       ) : (
@@ -1166,25 +1392,36 @@ function TasksView({
           <span>Crea el del agua para empezar.</span>
         </div>
       )}
-      {showForm ? <RotationForm onClose={() => setShowForm(false)} onCreate={onCreate} /> : null}
+      {showForm ? <RotationForm onClose={() => setShowForm(false)} onSubmit={onCreate} /> : null}
+      {editing ? (
+        <RotationForm
+          initial={editing}
+          onClose={() => setEditing(null)}
+          onSubmit={(input) => onUpdate(editing.id, input)}
+        />
+      ) : null}
     </section>
   );
 }
 
 function ScheduleForm({
   currentUser,
+  initial,
   onClose,
-  onCreate
+  onSubmit
 }: {
   currentUser: Person;
+  initial?: ScheduleSlot | null;
   onClose: () => void;
-  onCreate: (input: { personId: string; day: number; start: string; end: string }) => Promise<void>;
+  onSubmit: (input: NewSlotInput) => Promise<void>;
 }) {
   const { people } = useApp();
-  const [personId, setPersonId] = useState(currentUser.id);
-  const [day, setDay] = useState("0");
-  const [start, setStart] = useState("18:00");
-  const [end, setEnd] = useState("20:00");
+  const isEdit = !!initial;
+  const [personId, setPersonId] = useState(initial?.personId ?? currentUser.id);
+  const [day, setDay] = useState(String(initial?.day ?? 0));
+  const [start, setStart] = useState(initial?.start ?? "18:00");
+  const [end, setEnd] = useState(initial?.end ?? "20:00");
+  const [label, setLabel] = useState(initial?.label ?? "Lavadora");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -1194,10 +1431,10 @@ function ScheduleForm({
     setSaving(true);
     setError(null);
     try {
-      await onCreate({ personId, day: Number(day), start, end });
+      await onSubmit({ personId, day: Number(day), start, end, label: label.trim() || "Lavadora" });
       onClose();
     } catch {
-      setError("No se pudo agregar el turno. Intenta de nuevo.");
+      setError("No se pudo guardar el horario. Intenta de nuevo.");
       setSaving(false);
     }
   }
@@ -1207,13 +1444,17 @@ function ScheduleForm({
       <form className="modal-sheet schedule-form" onSubmit={submit}>
         <div className="modal-header">
           <div>
-            <p className="eyebrow">Lavadora</p>
-            <h2>Agregar turno</h2>
+            <p className="eyebrow">Horarios</p>
+            <h2>{isEdit ? "Editar horario" : "Agregar horario"}</h2>
           </div>
           <button className="icon-button" onClick={onClose} type="button" aria-label="Cerrar">
             <X size={20} />
           </button>
         </div>
+        <label>
+          <span>¿Para qué?</span>
+          <input value={label} onChange={(event) => setLabel(event.target.value)} placeholder="Ej: Lavadora" />
+        </label>
         <label>
           <span>Persona</span>
           <select value={personId} onChange={(event) => setPersonId(event.target.value)}>
@@ -1247,7 +1488,7 @@ function ScheduleForm({
         {error ? <div className="auth-alert error">{error}</div> : null}
         <button className="primary-action full" type="submit" disabled={saving}>
           <Plus size={19} />
-          {saving ? "Guardando…" : "Agregar turno"}
+          {saving ? "Guardando…" : isEdit ? "Guardar cambios" : "Agregar horario"}
         </button>
       </form>
     </div>
@@ -1257,25 +1498,31 @@ function ScheduleForm({
 function CalendarView({
   currentUser,
   slots,
-  onCreate
+  onCreate,
+  onUpdate,
+  onDelete
 }: {
   currentUser: Person;
   slots: ScheduleSlot[];
-  onCreate: (input: { personId: string; day: number; start: string; end: string }) => Promise<void>;
+  onCreate: (input: NewSlotInput) => Promise<void>;
+  onUpdate: (id: string, input: NewSlotInput) => Promise<void>;
+  onDelete: (id: string) => Promise<void>;
 }) {
   const { getPerson } = useApp();
   const [showForm, setShowForm] = useState(false);
+  const [editing, setEditing] = useState<ScheduleSlot | null>(null);
+  const [actionsSlot, setActionsSlot] = useState<ScheduleSlot | null>(null);
 
   return (
     <section className="view-stack">
       <div className="section-heading">
         <div>
-          <p className="eyebrow">Semana de lavadora</p>
+          <p className="eyebrow">Horarios de la semana</p>
           <h1>Turnos claros, menos sorpresas.</h1>
         </div>
         <button className="primary-action" onClick={() => setShowForm(true)} type="button">
           <Plus size={19} />
-          Agregar turno
+          Agregar horario
         </button>
       </div>
 
@@ -1284,22 +1531,26 @@ function CalendarView({
           const daySlots = slots.filter((slot) => slot.day === dayIndex);
           return (
             <article className="day-card" key={day}>
-              <strong>{day}</strong>
+              <strong className="day-name">{day}</strong>
               {daySlots.length ? (
                 daySlots.map((slot) => {
                   const person = getPerson(slot.personId);
                   return (
-                    <div
+                    <button
                       className="slot-pill"
                       key={slot.id}
+                      type="button"
+                      onClick={() => setActionsSlot(slot)}
                       style={{ "--slot-color": person.color, "--slot-tint": person.tint } as CSSProperties}
                     >
                       <Avatar person={person} size="sm" />
                       <span>
                         <strong>{person.shortName}</strong>
-                        <small>{slot.start} - {slot.end}</small>
+                        <small>
+                          {slot.label} · {displayTime(slot.start)}–{displayTime(slot.end)}
+                        </small>
                       </span>
-                    </div>
+                    </button>
                   );
                 })
               ) : (
@@ -1311,7 +1562,27 @@ function CalendarView({
       </div>
 
       {showForm ? (
-        <ScheduleForm currentUser={currentUser} onClose={() => setShowForm(false)} onCreate={onCreate} />
+        <ScheduleForm currentUser={currentUser} onClose={() => setShowForm(false)} onSubmit={onCreate} />
+      ) : null}
+      {editing ? (
+        <ScheduleForm
+          currentUser={currentUser}
+          initial={editing}
+          onClose={() => setEditing(null)}
+          onSubmit={(input) => onUpdate(editing.id, input)}
+        />
+      ) : null}
+      {actionsSlot ? (
+        <ItemActionsSheet
+          eyebrow="Horario"
+          title={`${getPerson(actionsSlot.personId).shortName} · ${DAYS[actionsSlot.day]}`}
+          onClose={() => setActionsSlot(null)}
+          onEdit={() => {
+            setEditing(actionsSlot);
+            setActionsSlot(null);
+          }}
+          onDelete={() => onDelete(actionsSlot.id)}
+        />
       ) : null}
     </section>
   );
@@ -1442,13 +1713,13 @@ function HelpSheet({ household, onClose }: { household: Household; onClose: () =
       icon: RotateCw,
       tone: "sky",
       title: "Turnos (como el agua)",
-      body: "En “Turnos” creas la lista. Cuando alguien cumple su turno, toca “Marcar hecho” y le pasa al siguiente automáticamente."
+      body: "En “Turnos” creas la lista. Cuando te toca, tocas “Marcar hecho” y le pasa al siguiente. Si le diste sin querer, usa “Deshacer”."
     },
     {
       icon: CalendarDays,
       tone: "violet",
-      title: "Horario de lavadora",
-      body: "En “Lavadora” agregas a cada persona su día y su hora. Así nadie choca."
+      title: "Horarios",
+      body: "En “Horarios” le pones a cada persona su día y su hora (lavadora, cocina, lo que sea). Toca un horario para editarlo o borrarlo."
     },
     {
       icon: Users,
@@ -1509,6 +1780,7 @@ export function NestLoopApp({
   const [rotations, setRotations] = useState<Rotation[]>([]);
   const [slots, setSlots] = useState<ScheduleSlot[]>([]);
   const [activeExpenseId, setActiveExpenseId] = useState<string | null>(null);
+  const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
   const [showHelp, setShowHelp] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
@@ -1584,6 +1856,15 @@ export function NestLoopApp({
     await apiCreateExpense(hid, currentUserId, input);
     await reloadExpenses();
   }
+  async function handleUpdateExpense(id: string, input: NewExpenseInput) {
+    await apiUpdateExpense(hid, id, input);
+    await reloadExpenses();
+  }
+  async function handleDeleteExpense(expense: Expense) {
+    await apiDeleteExpense(expense);
+    setActiveExpenseId(null);
+    await reloadExpenses();
+  }
   async function handleMarkPaid(
     expenseId: string,
     personId: string,
@@ -1601,21 +1882,36 @@ export function NestLoopApp({
     await setShareStatus(expenseId, personId, "rejected");
     await reloadExpenses();
   }
-  async function handleCreateRotation(input: {
-    title: string;
-    cadence: string;
-    icon: RotationIcon;
-    queue: string[];
-  }) {
+  async function handleCreateRotation(input: NewRotationInput) {
     await apiCreateRotation(hid, input);
     await reloadRotations();
   }
-  async function handleCompleteRotation(rotation: Rotation) {
-    await apiCompleteRotation(rotation);
+  async function handleUpdateRotation(id: string, input: NewRotationInput) {
+    await apiUpdateRotation(id, input);
     await reloadRotations();
   }
-  async function handleCreateSlot(input: { personId: string; day: number; start: string; end: string }) {
+  async function handleDeleteRotation(id: string) {
+    await apiDeleteRotation(id);
+    await reloadRotations();
+  }
+  async function handleCompleteRotation(rotation: Rotation) {
+    await apiCompleteRotation(rotation.id);
+    await reloadRotations();
+  }
+  async function handleUndoRotation(rotation: Rotation) {
+    await apiUndoRotation(rotation.id);
+    await reloadRotations();
+  }
+  async function handleCreateSlot(input: NewSlotInput) {
     await apiCreateSlot(hid, input);
+    await reloadSlots();
+  }
+  async function handleUpdateSlot(id: string, input: NewSlotInput) {
+    await apiUpdateSlot(id, input);
+    await reloadSlots();
+  }
+  async function handleDeleteSlot(id: string) {
+    await apiDeleteSlot(id);
     await reloadSlots();
   }
 
@@ -1670,12 +1966,21 @@ export function NestLoopApp({
                 <TasksView
                   rotations={rotations}
                   onComplete={handleCompleteRotation}
+                  onUndo={handleUndoRotation}
                   onCreate={handleCreateRotation}
+                  onUpdate={handleUpdateRotation}
+                  onDelete={handleDeleteRotation}
                 />
               ) : null}
 
               {activeView === "calendar" ? (
-                <CalendarView currentUser={currentUser} slots={slots} onCreate={handleCreateSlot} />
+                <CalendarView
+                  currentUser={currentUser}
+                  slots={slots}
+                  onCreate={handleCreateSlot}
+                  onUpdate={handleUpdateSlot}
+                  onDelete={handleDeleteSlot}
+                />
               ) : null}
 
               {activeView === "people" ? (
@@ -1693,6 +1998,20 @@ export function NestLoopApp({
             onConfirm={handleConfirm}
             onMarkPaid={handleMarkPaid}
             onReject={handleReject}
+            onDelete={handleDeleteExpense}
+            onEdit={(expense) => {
+              setActiveExpenseId(null);
+              setEditingExpense(expense);
+            }}
+          />
+        ) : null}
+
+        {editingExpense ? (
+          <ExpenseForm
+            currentUser={currentUser}
+            initial={editingExpense}
+            onClose={() => setEditingExpense(null)}
+            onSubmit={(input) => handleUpdateExpense(editingExpense.id, input)}
           />
         ) : null}
 

@@ -181,7 +181,11 @@ Pendiente (acciones del usuario, no código):
 
 </details>
 
-### Fase 11 — Pulido tras el estreno 🔴 PENDIENTE (planificada 2026-06-11, por feedback del usuario usando la app real)
+### Fase 11 — Pulido tras el estreno ✅ COMPLETADA (2026-06-11)
+
+Hecho y verificado (build + pruebas REST de servidor + verificación en navegador móvil con un usuario/casa de prueba aislados; datos de la familia intactos): 11.1 barra superior móvil sin superposición (quitado el `position:absolute`; código de invitación oculto ≤540px con especificidad `.top-actions .code-pill`). 11.2 sesión robusta en `AuthProvider` (deferir `loadFor` fuera del callback de `onAuthStateChange` para evitar el deadlock de supabase-js; try/catch con reintentos; no recargar en `TOKEN_REFRESHED`; estado `error` con pantalla "Reintentar" en `AuthGate`) + `sw.js` con `skipWaiting`/`clients.claim`/cache `v3`. 11.3 turnos: RPC `complete_rotation`/`undo_rotation` que validan en servidor que solo el dueño marca/deshace; UI con botón deshabilitado "Le toca a X" y "Deshacer mi turno"; políticas de `task_events` endurecidas. 11.4 "Lavadora"→"Horarios" + campo "¿Para qué?". 11.5 rediseño de tarjetas de horario (barra de color, ancho completo, hora formateada). 11.6 editar/eliminar gastos (en el detalle), turnos y horarios (menú al mantener apretado o botón ⋮ / tocar, con confirmación de dos pasos). 11.7 colores distintos por persona (migración reparte paleta + trigger asigna a nuevos). 11.8 pulido: stats compactas en móvil, animación de modales, feedback al tocar.
+
+<details><summary>Detalle del plan original de la Fase 11 (referencia)</summary>
 
 > ## ⚠️ ADVERTENCIA CRÍTICA: YA HAY DATOS REALES
 > La familia del usuario ya tiene cuentas, casa, y datos reales en Supabase. **PROHIBIDO** ejecutar borrados globales (`delete from households`, `delete from auth.users`, etc.) como se hacía en fases anteriores. Para pruebas E2E: crear UN usuario de prueba con email `*@test.local` y SU PROPIA casa de prueba, y al terminar borrar SOLO ese usuario y SOLO esa casa por id/email exacto. Verificar los conteos antes y después. Las migraciones de schema son seguras; los datos no se tocan.
@@ -248,6 +252,8 @@ Auditoría visual completa en móvil (la familia usa teléfonos). Sugerencias co
 - **NO cambiar** la identidad (colores de marca, logo, estilo cálido) — solo refinar. Cualquier rediseño grande, proponerlo al usuario antes.
 
 **Verificación final de la fase**: build OK; probar en preview móvil el flujo completo (entrar, crear/editar/borrar gasto y turno, marcar/deshacer turno, horarios); revisar consola sin errores; push y verificación en el deploy real de Vercel; datos reales de la familia intactos (conteos iguales antes/después salvo lo que el flujo de prueba creó y borró en su propia casa de prueba).
+
+</details>
 
 ---
 

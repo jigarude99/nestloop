@@ -5,7 +5,7 @@ import type { Session } from "@supabase/supabase-js";
 import { getSupabase } from "../lib/supabase";
 import { Household, Person, toPerson } from "../lib/household";
 
-type AuthStatus = "loading" | "signed-out" | "no-household" | "ready";
+type AuthStatus = "loading" | "signed-out" | "no-household" | "ready" | "error";
 
 type Profile = { id: string; full_name: string; color: string | null };
 
@@ -43,8 +43,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [error, setError] = useState<string | null>(null);
 
   // Carga el perfil, la casa y los miembros del usuario actual.
+  // Si una consulta falla (red móvil inestable), reintenta antes de rendirse,
+  // y nunca interpreta un fallo como "sin casa" o "sesión cerrada".
   const loadFor = useCallback(
-    async (activeSession: Session | null) => {
+    async (activeSession: Session | null, attempt = 0): Promise<void> => {
       if (!activeSession) {
         setProfile(null);
         setHousehold(null);
@@ -55,54 +57,65 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       const userId = activeSession.user.id;
 
-      const { data: profileRow } = await supabase
-        .from("profiles")
-        .select("id, full_name, color")
-        .eq("id", userId)
-        .maybeSingle();
-      setProfile(profileRow ?? { id: userId, full_name: "", color: null });
+      try {
+        const { data: profileRow, error: pErr } = await supabase
+          .from("profiles")
+          .select("id, full_name, color")
+          .eq("id", userId)
+          .maybeSingle();
+        if (pErr) throw pErr;
+        setProfile(profileRow ?? { id: userId, full_name: "", color: null });
 
-      const { data: membership } = await supabase
-        .from("household_members")
-        .select("role, household:households(id, name, invite_code)")
-        .eq("profile_id", userId)
-        .limit(1)
-        .maybeSingle();
+        const { data: membership, error: mErr } = await supabase
+          .from("household_members")
+          .select("role, household:households(id, name, invite_code)")
+          .eq("profile_id", userId)
+          .limit(1)
+          .maybeSingle();
+        if (mErr) throw mErr;
 
-      const householdRow = (membership?.household ?? null) as Household | null;
-      if (!householdRow) {
-        setHousehold(null);
-        setPeople([]);
-        setStatus("no-household");
-        return;
+        const householdRow = (membership?.household ?? null) as Household | null;
+        if (!householdRow) {
+          setHousehold(null);
+          setPeople([]);
+          setStatus("no-household");
+          return;
+        }
+        setHousehold(householdRow);
+
+        const { data: memberRows, error: memErr } = await supabase
+          .from("household_members")
+          .select("profile_id, role, profile:profiles(full_name, color)")
+          .eq("household_id", householdRow.id);
+        if (memErr) throw memErr;
+
+        const list: Person[] = (memberRows ?? []).map((row: any, index: number) =>
+          toPerson(
+            {
+              profile_id: row.profile_id,
+              role: row.role,
+              full_name: row.profile?.full_name ?? "Sin nombre",
+              color: row.profile?.color
+            },
+            index
+          )
+        );
+        list.sort((a, b) => (a.id === userId ? -1 : b.id === userId ? 1 : 0));
+        setPeople(list);
+        setStatus("ready");
+      } catch {
+        if (attempt < 2) {
+          await new Promise((r) => setTimeout(r, 700 * (attempt + 1)));
+          return loadFor(activeSession, attempt + 1);
+        }
+        setStatus("error");
       }
-      setHousehold(householdRow);
-
-      const { data: memberRows } = await supabase
-        .from("household_members")
-        .select("profile_id, role, profile:profiles(full_name, color)")
-        .eq("household_id", householdRow.id);
-
-      const list: Person[] = (memberRows ?? []).map((row: any, index: number) =>
-        toPerson(
-          {
-            profile_id: row.profile_id,
-            role: row.role,
-            full_name: row.profile?.full_name ?? "Sin nombre",
-            color: row.profile?.color
-          },
-          index
-        )
-      );
-      // El usuario actual primero.
-      list.sort((a, b) => (a.id === userId ? -1 : b.id === userId ? 1 : 0));
-      setPeople(list);
-      setStatus("ready");
     },
     [supabase]
   );
 
   const refresh = useCallback(async () => {
+    setStatus("loading");
     const { data } = await supabase.auth.getSession();
     setSession(data.session);
     await loadFor(data.session);
@@ -110,16 +123,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     let active = true;
-    supabase.auth.getSession().then(({ data }) => {
-      if (!active) return;
-      setSession(data.session);
-      loadFor(data.session);
-    });
 
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, newSession) => {
+    const { data: sub } = supabase.auth.onAuthStateChange((event, newSession) => {
+      if (!active) return;
       setSession(newSession);
+
+      if (event === "SIGNED_OUT") {
+        setProfile(null);
+        setHousehold(null);
+        setPeople([]);
+        setStatus("signed-out");
+        return;
+      }
+
+      // En refresh de token o cambios de usuario NO recargamos todo ni mostramos
+      // "cargando" (evita el parpadeo y la falsa sensación de cierre de sesión).
+      if (event === "TOKEN_REFRESHED" || event === "USER_UPDATED") {
+        return;
+      }
+
+      // INITIAL_SESSION, SIGNED_IN, etc.: diferir fuera del callback para evitar
+      // el deadlock del lock interno de auth en supabase-js v2.
       setStatus("loading");
-      loadFor(newSession);
+      setTimeout(() => {
+        if (active) loadFor(newSession);
+      }, 0);
     });
 
     return () => {
