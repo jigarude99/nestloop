@@ -85,6 +85,14 @@ create table public.schedule_slots (
   created_at timestamptz not null default now()
 );
 
+grant usage on schema public to anon, authenticated;
+
+grant select on all tables in schema public to anon, authenticated;
+grant insert, update, delete on all tables in schema public to authenticated;
+
+alter default privileges in schema public grant select on tables to anon, authenticated;
+alter default privileges in schema public grant insert, update, delete on tables to authenticated;
+
 alter table public.households enable row level security;
 alter table public.profiles enable row level security;
 alter table public.household_members enable row level security;
