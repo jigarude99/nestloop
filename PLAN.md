@@ -148,7 +148,13 @@ Durante esta fase:
 
 **Diferido a futuro (no bloquea):** dividir `NestLoopApp.tsx` en archivos por vista (sigue siendo monolito, ~1300 líneas) y Realtime de Supabase (hoy se recarga tras cada acción; suficiente para v1). Mostrar comprobantes de pago con `SignedImage` en cada fila (hoy solo se muestra la factura del gasto).
 
-### Fase 10 — Entrega a la familia 🟡 EN CURSO (2026-06-11)
+### Fase 10 — Entrega a la familia ✅ COMPLETADA (2026-06-11)
+
+**La familia ya está registrada y usando la app en producción.** El usuario (Gandhi) creó su casa real (se ve código de invitación activo) y los miembros entraron. A partir de aquí: **⚠️ HAY DATOS REALES EN LA BASE — ver advertencia al inicio de la Fase 11.**
+
+<details><summary>Detalle de la Fase 10 (referencia)</summary>
+
+### Fase 10 (detalle original) 🟡
 
 Hecho por código:
 - **Logo unificado y rediseñado**: una casa (nido) dentro de un bucle, coronada por un sol, en `public/icon.svg` (ícono instalado/PWA + favicon) y en `components/BrandGlyph.tsx` (logo dentro de la app). Antes había dos diseños distintos (nube+más vs. flecha-bucle); ahora los tres lugares (instalado, navegador, dentro de la app) usan el mismo. Se quitó el sol duplicado del CSS de `.brand-mark`. `manifest.json` en español, con purposes `any` + `maskable`.
@@ -172,6 +178,76 @@ Pendiente (acciones del usuario, no código):
 6. (Recordatorio) Desactivar "Confirm email" en Supabase para que el registro sea sin fricción.
 
 </details>
+
+</details>
+
+### Fase 11 — Pulido tras el estreno 🔴 PENDIENTE (planificada 2026-06-11, por feedback del usuario usando la app real)
+
+> ## ⚠️ ADVERTENCIA CRÍTICA: YA HAY DATOS REALES
+> La familia del usuario ya tiene cuentas, casa, y datos reales en Supabase. **PROHIBIDO** ejecutar borrados globales (`delete from households`, `delete from auth.users`, etc.) como se hacía en fases anteriores. Para pruebas E2E: crear UN usuario de prueba con email `*@test.local` y SU PROPIA casa de prueba, y al terminar borrar SOLO ese usuario y SOLO esa casa por id/email exacto. Verificar los conteos antes y después. Las migraciones de schema son seguras; los datos no se tocan.
+
+Ejecutar los bloques en orden. Build + verificación visual móvil (preview 375px) por bloque; commit y push por bloque.
+
+#### 11.1 Arreglar la barra superior en móvil (se superponen los elementos)
+
+**Síntoma** (foto del usuario en su teléfono): el código de invitación se monta sobre el logo, el avatar queda cortado, todo apiñado.
+**Causa exacta**: en `app/globals.css` (~línea 1140), en `@media (max-width: 1100px)` el `.top-actions` queda `position: absolute; right: 26px; top: 14px;` flotando sobre la fila del `.mobile-brand`. Con 5 elementos (sync-pill, code-pill, person-chip, notification-pill, ayuda, salir) no caben y se encima.
+**Arreglo propuesto**: eliminar el posicionamiento absoluto; hacer `.top-bar` una sola fila flex (marca a la izquierda, acciones a la derecha) con `flex-wrap` o reducción progresiva. En pantallas angostas (≤540px) **ocultar el `.code-pill`** (el código ya se muestra grande en la vista Personas, que es su lugar natural) y dejar: marca + avatar + pendientes + ayuda + salir. Verificar también que no se rompa en tablet (768) y desktop.
+
+#### 11.2 Sesión que "se cierra sola" + pantalla que se queda cargando
+
+El usuario reporta: (a) si pasa un rato fuera de la app, al volver le pide entrar de nuevo; (b) una vez se quedó en "Cargando tu casa…" para siempre. **No hace falta un botón "mantener sesión"** — Supabase ya persiste la sesión; hay que arreglar los bugs que la hacen parecer cerrada:
+
+1. **Deadlock conocido de supabase-js v2** en `components/AuthProvider.tsx` (~línea 119): el callback de `onAuthStateChange` llama `loadFor()` que hace queries con el mismo cliente → el lock interno de auth puede trabarse (causa de la pantalla colgada). Arreglo estándar: diferir el trabajo fuera del callback (`setTimeout(() => loadFor(s), 0)`).
+2. **`loadFor` no maneja errores**: si una query lanza/rechaza (red móvil inestable), `status` se queda en `"loading"` para siempre. Envolver en try/catch: ante fallo, reintentar 1-2 veces y si no, mostrar estado de error con botón "Reintentar" (no expulsar al login).
+3. **Cada `TOKEN_REFRESHED` resetea a `"loading"` y recarga todo**: al volver a la app tras un rato, el token se refresca y el usuario ve la pantalla de carga (y si pega con el deadlock, se cuelga → parece "sesión cerrada"). Arreglo: solo poner `"loading"`/recargar en eventos `SIGNED_IN` y `SIGNED_OUT`; en `TOKEN_REFRESHED` solo actualizar `session` sin tocar `status`.
+4. **No tratar `null` transitorio como logout**: solo pasar a `signed-out` ante el evento `SIGNED_OUT` explícito o `getSession` null estable.
+5. **Service worker** (`public/sw.js`): añadir `self.skipWaiting()` en install y `clients.claim()` en activate, y subir `CACHE_NAME` (ej. `nestloop-v2`) en cada cambio del SW, para que los teléfonos no queden atrapados en versiones viejas (esto también afecta el ícono y los deploys).
+6. Verificar en Supabase Dashboard → Authentication → Sessions que NO esté activado "Time-box user sessions" ni "Inactivity timeout" (por defecto están apagados; si están encendidos, apagarlos — eso sí cerraría la sesión).
+
+**Criterio de aceptación**: con sesión iniciada, cerrar la pestaña/app, esperar >1h (o forzar expiración del access token), volver a abrir → entra directo sin login y sin quedarse cargando.
+
+#### 11.3 Turnos: solo el dueño del turno puede marcar "hecho" + botón deshacer
+
+- **UI** (`RotationCard` en `components/NestLoopApp.tsx`): si `currentUserId !== rotation.queue[rotation.currentIndex]`, el botón "Marcar hecho" se deshabilita y muestra "Le toca a {nombre}". Solo el dueño del turno lo ve activo.
+- **Servidor (recomendado)**: crear dos RPC `SECURITY DEFINER` en una migración — `complete_rotation(p_rotation_id uuid)` que valida server-side que `auth.uid()` ES el del turno actual, inserta el `task_event` y avanza `current_index` atómicamente; y `undo_rotation(p_rotation_id uuid)` que valida que el último `task_event` es de `auth.uid()`, lo borra y retrocede `current_index`. Cambiar `lib/api.ts` para usar estos RPC en vez de insert+update sueltos.
+- **Endurecer políticas**: la migración `phase9_rotation_icon_and_events` relajó el INSERT de `task_events` a cualquier miembro — revertir a `profile_id = auth.uid()`; y el DELETE restringirlo a `profile_id = auth.uid()` (para el deshacer). Con los RPC, esto es defensa en profundidad.
+- **UI deshacer**: tras marcar hecho, mostrar en la tarjeta un botón "Deshacer" (visible solo para quien hizo el último evento, mientras sea el último). Con confirmación no hace falta; es reversible por naturaleza.
+
+#### 11.4 Renombrar "Lavadora" → "Horarios"
+
+La sección sirve para horarios en general, no solo lavadora. Cambiar en `components/NestLoopApp.tsx`: ítem de navegación (`NAV_ITEMS`), títulos de la vista ("Semana de lavadora" → algo como "Horarios de la semana"), el eyebrow del formulario, el texto del paso correspondiente en `HelpSheet`, y el `label` por defecto que se inserta en BD (`createSlot` en `lib/api.ts` y el placeholder "Lavadora"). El usuario podría querer poner un campo "¿Para qué?" (etiqueta libre del turno, ej. "Lavadora", "Cocina") — añadirlo como input opcional con default "Lavadora".
+
+#### 11.5 Diseño de las tarjetas del horario (slot dentro del día)
+
+El usuario reporta que el cuadro de turno dentro del día no se ve centrado ni estético. Revisar `.day-card` y `.slot-pill` en `app/globals.css`: alinear el contenido, padding consistente, que el pill ocupe el ancho completo de la tarjeta del día, avatar y texto bien alineados verticalmente, hora con tipografía menor pero legible. Verificar en móvil (la grilla de 7 días pasa a 1 columna) y en desktop.
+
+#### 11.6 Eliminar y editar gastos, turnos y horarios
+
+Hoy no se puede borrar nada (el usuario creó dos turnos de agua por error y no puede quitar uno).
+
+- **Interacción**: mantener apretado (long-press ~500ms, también clic derecho en desktop) sobre una tarjeta de gasto, turno u horario abre un menú simple: "Editar" / "Eliminar". **Además**, para que sea descubrible por gente no tecnológica, poner un botón visible "Eliminar" (y "Editar" donde aplique) dentro del detalle del gasto y en las tarjetas de turno/horario (ej. ícono de lápiz/papelera discreto). Confirmación en español antes de borrar ("¿Seguro que quieres eliminar este gasto? Esta acción no se puede deshacer.").
+- **Permisos** (las políticas ya existen de Fase 7, verificar): gastos → borra quien lo creó o pagó (`creator deletes expense`); turnos y horarios → cualquier miembro. En la UI, ocultar "Eliminar" del gasto si el usuario no es creador/pagador.
+- **API** (`lib/api.ts`): añadir `deleteExpense`, `updateExpense` (+ reconciliar shares: borrar e insertar de nuevo — políticas `managers create/delete shares` ya existen), `deleteRotation`, `updateRotation` (+ reemplazar miembros), `deleteSlot`, `updateSlot`.
+- **Editar gasto**: reusar `ExpenseForm` con valores iniciales (modo edición). Si cambia el total o participantes, regenerar las divisiones (advertir que se reinician los estados de pago si cambia el monto).
+- **Storage**: al borrar un gasto, borrar también su foto de factura y comprobantes asociados (best-effort).
+
+#### 11.7 Bug de colores: todos los avatares salen verdes
+
+`profiles.color` tiene default `'#0f9f7a'` (no null), así que `toPerson` en `lib/household.ts` nunca usa la paleta por índice → **todos los miembros tienen el mismo color verde** (se pierde la distinción visual por persona, importante para la familia). Arreglo en dos partes: (a) migración que reparte colores distintos a los perfiles existentes (UPDATE por orden de creación con la paleta de `lib/household.ts`); (b) que los nuevos perfiles reciban color automático distinto — opción simple: en el trigger `handle_new_user`, elegir color rotando la paleta; o quitar el default y dejar que el cliente asigne por índice. Bonus opcional: dejar que cada quien elija su color en un mini-perfil.
+
+#### 11.8 Repaso general de diseño (mejoras sugeridas, aplicar con criterio)
+
+Auditoría visual completa en móvil (la familia usa teléfonos). Sugerencias concretas detectadas:
+- **Jerarquía del Inicio**: las 3 tarjetas de stats en móvil quedan muy altas y empujan el contenido útil; considerar compactarlas (fila horizontal de 3 mini-tarjetas).
+- **Contraste y tamaño**: revisar textos `--muted` sobre fondos suaves (legibilidad para mayores); botones principales ya son grandes, mantener.
+- **Consistencia de íconos y tonos**: cada vista tiene su tono (coral gastos, sky turnos, etc.) — aplicarlo de forma consistente en encabezados.
+- **Pulido del hero**: la frase del hero es larga en móvil; valorar versión más corta.
+- **Microinteracciones**: estados hover/active en tarjetas, transición suave al abrir modales.
+- **Pantalla de carga**: sustituir el empty-state de "Cargando tu casa…" por skeletons suaves de tarjetas (se siente más rápido).
+- **NO cambiar** la identidad (colores de marca, logo, estilo cálido) — solo refinar. Cualquier rediseño grande, proponerlo al usuario antes.
+
+**Verificación final de la fase**: build OK; probar en preview móvil el flujo completo (entrar, crear/editar/borrar gasto y turno, marcar/deshacer turno, horarios); revisar consola sin errores; push y verificación en el deploy real de Vercel; datos reales de la familia intactos (conteos iguales antes/después salvo lo que el flujo de prueba creó y borró en su propia casa de prueba).
 
 ---
 
