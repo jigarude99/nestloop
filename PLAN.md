@@ -1,0 +1,146 @@
+# PLAN MAESTRO — NestLoop (continuación del proyecto)
+
+> **Instrucciones para el agente que lea esto:** Este documento es auto-contenido. Léelo completo antes de tocar código. Contiene el contexto del proyecto, el estado exacto en que quedó, los problemas detectados en una auditoría previa, y las fases de trabajo pendientes con criterios de aceptación. Ejecuta las fases en orden. No rehagas lo que ya funciona.
+
+---
+
+## 1. Contexto: qué es NestLoop y qué problema resuelve
+
+NestLoop es una app para **la familia del usuario** (varias personas en una casa, varias de ellas **poco tecnológicas**). Hoy gestionan todo informalmente:
+
+- **Turnos rotativos** (ej. comprar el agua) se marcan en una pizarra física con ganchitos: cuando alguien compra, se marca, y le toca al siguiente de la lista; al llegar al último se borra todo y se reinicia.
+- **Gastos compartidos** (ej. compras en Walmart) se pasan por foto de factura en el chat de WhatsApp con un "esto se divide entre tantos".
+- **Horarios** (ej. uso de la lavadora) se asignan verbalmente por días.
+
+### Requisitos funcionales que pidió el usuario
+
+1. Cada miembro de la casa tiene su **perfil/cuenta** para entrar.
+2. **Crear un gasto** con foto de la factura, quién pagó, fecha, y entre quiénes se divide.
+3. División del gasto: **partes iguales o montos específicos por persona**.
+4. A cada persona le aparece **lo que debe**, cuánto, y un poco de info del gasto (no demasiado detalle).
+5. **Pagar con comprobante**: subir captura de la transferencia, o marcar "entregué efectivo".
+   - **Regla clave**: pago por transferencia con comprobante → se marca confirmado automáticamente. Pago en efectivo → el que cobró debe **aceptarlo manualmente** para confirmarse.
+6. **Turnos rotativos** (el del agua primero) con avance automático al siguiente.
+7. **Calendario/horario de lavadora** por persona y día.
+8. **Requisito de diseño explícito y muy importante**: la app debe ser *extremadamente* simple e intuitiva visualmente, "un gozo visual", con botones grandes, porque la van a usar personas que no saben usar tecnología. El usuario los va a ayudar, pero la app no puede ser un dolor de cabeza.
+
+---
+
+## 2. Estado actual (verificado el 2026-06-10)
+
+### Infraestructura ✅ (ya montada, NO rehacer)
+
+- **Repo GitHub**: `jigarude99/nestloop` (rama `main`, 3 commits).
+- **Deploy Vercel**: https://nestloop-eight.vercel.app — funciona, carga bien en desktop y móvil, badge "Cloud ready" visible.
+- **Supabase**: proyecto activo en `https://zzaqgynyezsgcbdynekc.supabase.co`. El schema de `docs/supabase-schema.sql` ya fue ejecutado, más dos fixes (`docs/supabase-fix-rls.sql` por recursión infinita en RLS, y `docs/supabase-fix-grants.sql` por grants de API). La REST API responde 200.
+- **Storage**: existe el bucket `receipts` (privado), creado manualmente. **Sin políticas todavía.**
+- **Variables de entorno**: `NEXT_PUBLIC_SUPABASE_URL` y `NEXT_PUBLIC_SUPABASE_ANON_KEY` configuradas en `.env.local` (ignorado por git) y en Vercel (Production + Preview + Development).
+- **Acceso del agente**: hay conectores MCP de Supabase y Vercel disponibles — se pueden ejecutar migraciones SQL directamente con `apply_migration` / `execute_sql` sin pedirle al usuario que copie SQL a mano.
+
+### Código
+
+- **Stack**: Next.js 16.2.9 (App Router), React 19, TypeScript, CSS propio en `app/globals.css` (no Tailwind), `lucide-react` para iconos, `@supabase/supabase-js` 2.108.1. PWA con manifest y service worker (`components/RegisterServiceWorker.tsx`).
+- **`components/NestLoopApp.tsx`** (1,619 líneas): TODA la app vive aquí. Vistas: Home, Bills (gastos), Turns (turnos), horario de lavadora, People (balances). UI pulida y mobile-first.
+- **`lib/supabase.ts`**: crea el cliente de Supabase pero **solo se usa para mostrar el badge "Cloud ready"**. Ningún dato pasa por Supabase.
+- **Persistencia actual**: `localStorage` del navegador (hook `useStoredState`), sembrado con datos demo (`DEMO_EXPENSES`, `DEMO_ROTATIONS`, `DEMO_SLOTS`). Cada navegador tiene sus propios datos: **no hay datos compartidos reales, no hay login, las fotos solo guardan el nombre del archivo (no se suben a ningún lado)**.
+
+### Schema de base de datos (ya aplicado en Supabase)
+
+Tablas: `households`, `profiles` (FK a `auth.users`), `household_members` (con rol admin/member), `expenses` (con `receipt_path`, montos en centavos), `expense_shares` (con `status` pending/sent/confirmed/rejected, `payment_method` transfer/cash/other, `proof_path` — **el modelo de pagos vive aquí, no hace falta tabla aparte**), `task_rotations`, `task_rotation_members`, `task_events`, `schedule_slots`. Todas con RLS habilitado.
+
+---
+
+## 3. Problemas detectados (auditoría) — esto es lo que hay que corregir
+
+1. **Tablas inaccesibles por RLS sin políticas**: `task_rotations`, `task_rotation_members`, `task_events` y `schedule_slots` tienen RLS habilitado pero **cero políticas** → la API las bloquea por completo. Los módulos de turnos y lavadora no podrán funcionar con datos reales hasta arreglarlo.
+2. **Faltan políticas de escritura**: no hay INSERT en `expense_shares` (no se pueden crear las divisiones al crear un gasto), ni INSERT/UPDATE/DELETE en households, members, rotations, slots, etc. Solo existen: SELECT en households/members/profiles/expenses/shares, INSERT en expenses, y UPDATE del propio share.
+3. **Bucket `receipts` sin políticas de Storage**: nadie puede subir ni leer fotos. Hacen falta políticas sobre `storage.objects` (subir a carpeta del household, leer solo miembros del household).
+4. **No hay trigger de creación de perfil**: cuando alguien se registre con Supabase Auth, no se crea su fila en `profiles`. Hace falta un trigger `on auth.users insert` (security definer) o crear el perfil desde la app tras el signup.
+5. **No hay flujo de onboarding al household**: nada conecta una cuenta nueva con el household de la familia. Decisión recomendada: el usuario (admin) crea las cuentas de su familia él mismo, o se usa un código de invitación simple.
+6. **UI en inglés** ("Home", "Bills", "Turns", "Shared groceries"): la familia es hispanohablante y poco tecnológica. **Traducir toda la UI al español** (o i18n simple con español por defecto).
+7. **Monolito de 1,619 líneas**: dividir `NestLoopApp.tsx` en módulos al conectar datos reales (por vista: gastos, pagos, turnos, horario, personas + hooks de datos).
+8. **Estrategia de login no definida**: para gente no tecnológica usar **email + contraseña** (el admin las configura y las reparte), con sesión persistente para que solo hagan login una vez por dispositivo. Evitar magic links (requieren abrir el correo cada vez).
+
+---
+
+## 4. Fases pendientes
+
+> Las fases 1–6 del plan original (diseño, base técnica, UI, schema inicial, deploy en Vercel, y entrega) están hechas o parcialmente hechas como se describe arriba. Continuar desde aquí.
+
+### Fase 7 — Reparar la base de datos ✅ COMPLETADA (2026-06-10)
+
+Aplicada vía MCP. SQL consolidado guardado en `docs/supabase-phase7.sql`. Resultado:
+- Políticas RLS completas en TODAS las tablas (turnos y horarios ya no están bloqueados); CRUD por household, escritura de divisiones de gasto, gestión de miembros por admin.
+- Storage: políticas para buckets `receipts` y `payment-proofs` (acceso solo a miembros del household; convención de ruta `<household_id>/...`).
+- Trigger `on_auth_user_created` → crea `profiles` al registrarse.
+- Onboarding: columna `households.invite_code` + RPC `create_household(p_name)` y `join_household(p_invite_code)` (SECURITY DEFINER, sortean el bootstrap de RLS).
+- Helpers nuevos: `is_household_admin`, `can_manage_expense`, `can_access_rotation`.
+- **Prueba E2E pasada** (8/8): trigger crea perfiles, aislamiento entre households, escritura en todas las tablas del propio household, bloqueo de escritura cruzada. `get_advisors` security: solo WARN aceptados (funciones SECURITY DEFINER expuestas como RPC = patrón estándar RLS; trigger y onboarding endurecidos).
+
+**Nota para Fase 8/9 (contrato de datos ya disponible):**
+- Registro de usuario: pasar `full_name` en `options.data` del `signUp` para que el trigger lo use.
+- Crear la casa: `supabase.rpc('create_household', { p_name })`.
+- Unirse a una casa: `supabase.rpc('join_household', { p_invite_code })`.
+- Subir archivos SIEMPRE con ruta que empiece por el `household_id`: ej. `receipts` → `${householdId}/${expenseId}/factura.jpg`; `payment-proofs` → `${householdId}/${shareId}/comprobante.jpg`.
+- Flujo efectivo/transferencia: la política UPDATE de `expense_shares` permite que el participante actualice su propio share (marcar `sent`) y que el `paid_by` del gasto confirme/rechace (status `confirmed`/`rejected`).
+
+<details><summary>Detalle original de la Fase 7 (referencia)</summary>
+
+Aplicar una migración (vía MCP `apply_migration` directamente) que incluya:
+
+1. Políticas RLS completas para `task_rotations`, `task_rotation_members`, `task_events`, `schedule_slots`: SELECT/INSERT/UPDATE/DELETE para miembros del household correspondiente. **Cuidado con la recursión**: usar la misma técnica del fix anterior (`docs/supabase-fix-rls.sql` usa una función `security definer` tipo `is_household_member()` para evitar la recursión infinita en `household_members` — reutilizarla).
+2. INSERT en `expense_shares` para miembros del household; UPDATE del share propio ya existe (verificar que cubra el flujo de confirmación: quien cobró confirma shares de otros → puede requerir política adicional para que el `paid_by` del expense pueda actualizar status de los shares de su gasto).
+3. Políticas de `storage.objects` para el bucket `receipts`: rutas `household_id/...`, INSERT y SELECT solo para miembros de ese household.
+4. Trigger para crear `profiles` automáticamente al registrarse un usuario (tomar `full_name` de `raw_user_meta_data`).
+5. Políticas INSERT/UPDATE para `households` y `household_members` que permitan el onboarding (crear casa, unirse con invitación) sin romper la seguridad.
+6. Guardar el SQL final también en `docs/` y commitearlo.
+
+**Criterio de aceptación**: con un usuario autenticado de prueba, se puede leer/escribir en todas las tablas de su household vía REST, y subir/leer un archivo en `receipts`. Un usuario de otro household NO ve nada. Correr `get_advisors` de Supabase para validar seguridad.
+
+</details>
+
+### Fase 8 — Autenticación y familia
+
+1. Activar email+password en Supabase Auth (desactivar confirmación por email si complica, o usar cuentas pre-creadas por el admin).
+2. Pantalla de login en español, ultra simple: campos grandes, un botón, mensajes de error claros y amables.
+3. Flujo de primera vez: el admin (el usuario) crea su cuenta → crea el household ("la casa") → crea/invita a los miembros. Mantenerlo simple: una pantalla de administración mínima.
+4. Sesión persistente (Supabase ya la maneja con localStorage) — la familia hace login UNA vez por teléfono.
+5. El switcher de "persona actual" del demo se reemplaza por el usuario autenticado real.
+
+**Criterio de aceptación**: dos usuarios distintos en dos navegadores ven el mismo household con sus respectivas identidades.
+
+### Fase 9 — Conectar datos reales, módulo por módulo (commit y prueba por módulo)
+
+Orden recomendado (de mayor a menor valor):
+
+1. **Gastos + divisiones**: crear gasto → INSERT en `expenses` + `expense_shares`; subir foto de factura a Storage; listar gastos del household con sus shares. Reemplazar `DEMO_EXPENSES`/localStorage.
+2. **Pagos + comprobantes**: marcar share como pagado; transferencia con comprobante → `confirmed` directo; efectivo → `sent` hasta que el cobrador lo confirme o rechace. Subir captura a Storage.
+3. **Turnos rotativos**: CRUD de rotaciones, marcar "comprado/hecho" → registra `task_event` y avanza `current_index` al siguiente.
+4. **Horario de lavadora**: CRUD de `schedule_slots`.
+
+Durante esta fase:
+- **Dividir `NestLoopApp.tsx`** en componentes por vista + hooks de datos (`useExpenses`, `useRotations`, etc.).
+- **Traducir toda la UI al español.**
+- Mantener estados de carga/error visibles pero amables (la familia no debe ver errores técnicos crudos).
+- Considerar Realtime de Supabase (suscripciones) para que los cambios se vean al instante entre miembros — opcional, un refetch al volver a la vista es suficiente para v1.
+
+**Criterio de aceptación por módulo**: el dato creado en un navegador aparece en otro navegador con otro usuario; las fotos se suben y se ven; el flujo efectivo-requiere-confirmación funciona de punta a punta. Verificar también en el deploy de Vercel, no solo local.
+
+### Fase 10 — Entrega a la familia
+
+1. Crear las cuentas reales de cada miembro.
+2. Borrar datos demo/de prueba.
+3. Verificar deploy final en Vercel y la instalación PWA en iPhone y Android (Add to Home Screen).
+4. Mini-guía visual en español (puede ser una página `/ayuda` dentro de la app) con: cómo entrar, cómo poner un gasto, cómo pagar, cómo confirmar efectivo, cómo marcar el turno del agua.
+5. Prueba guiada con un gasto real de la casa.
+
+---
+
+## 5. Reglas de trabajo para el agente
+
+- **Idioma**: responder al usuario siempre en español. El usuario no es programador: explicar en términos simples y guiarlo paso a paso cuando tenga que hacer algo manual (con instrucciones exactas de qué click dar).
+- **Autonomía**: hacer todo lo posible directamente (migraciones vía MCP de Supabase, commits, push a GitHub que dispara el deploy de Vercel). Solo pedirle al usuario lo que de verdad requiere su intervención manual.
+- **No degradar el diseño**: el nivel visual actual es bueno; cualquier pantalla nueva debe estar al mismo nivel. Mobile-first siempre, botones grandes, lenguaje no técnico en la UI.
+- **Commits**: pequeños y por módulo, push a `main` (despliega automático en Vercel). Probar el build (`npm run build`) antes de pushear.
+- **Seguridad**: nunca commitear `.env.local` ni keys secretas; el anon key publishable es público por diseño, eso está bien.
+- **Verificación**: después de cada fase, probar contra el deploy real de Vercel, no solo localhost.
