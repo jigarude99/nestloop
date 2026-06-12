@@ -1,4 +1,4 @@
-const CACHE_NAME = "nestloop-v6";
+const CACHE_NAME = "nestloop-v7";
 const APP_SHELL = [
   "/",
   "/manifest.json",
@@ -39,5 +39,19 @@ self.addEventListener("fetch", (event) => {
         return response;
       })
       .catch(() => caches.match(event.request).then((cached) => cached || caches.match("/")))
+  );
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  event.waitUntil(
+    self.clients
+      .matchAll({ type: "window", includeUncontrolled: true })
+      .then((clients) => {
+        const openClient = clients.find((client) => "focus" in client);
+        if (openClient) return openClient.focus();
+        if (self.clients.openWindow) return self.clients.openWindow("/");
+        return undefined;
+      })
   );
 });

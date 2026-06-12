@@ -2,6 +2,7 @@
 
 import {
   BadgeCheck,
+  BellRing,
   CalendarDays,
   Camera,
   Check,
@@ -61,6 +62,7 @@ import {
   fetchRotations,
   fetchSlots,
   markSharePaid,
+  payExpenseForEveryone as apiPayExpenseForEveryone,
   setShareStatus,
   signedUrl,
   undoRotation as apiUndoRotation,
@@ -92,7 +94,7 @@ const NAV_ITEMS: NavItem[] = [
 ];
 
 const DAYS = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
-const CATEGORIES = ["Comida", "Agua", "Casa", "Limpieza", "Otro"];
+const CATEGORIES = ["Comida", "Agua", "Casa", "Limpieza", "Reembolso", "Otro"];
 
 // ---------------------------------------------------------------------------
 // Contexto de datos de la casa (personas reales + usuario actual)
@@ -360,12 +362,16 @@ function TopBar({
   currentUser,
   household,
   pendingCount,
+  notificationPermission,
+  onEnableNotifications,
   onSignOut,
   onHelp
 }: {
   currentUser: Person;
   household: Household;
   pendingCount: number;
+  notificationPermission: NotificationPermission | "unsupported";
+  onEnableNotifications: () => void;
   onSignOut: () => void;
   onHelp: () => void;
 }) {
@@ -409,9 +415,15 @@ function TopBar({
           <Avatar person={currentUser} size="sm" />
           <span>{currentUser.shortName}</span>
         </span>
-        <span className="notification-pill" aria-label={`${pendingCount} pendientes`}>
-          {pendingCount}
-        </span>
+        <button
+          className={`notification-pill ${notificationPermission === "granted" ? "enabled" : ""}`}
+          onClick={onEnableNotifications}
+          type="button"
+          title={notificationPermission === "granted" ? "Notificaciones activas" : "Activar notificaciones"}
+          aria-label={`${pendingCount} pendientes`}
+        >
+          {pendingCount > 0 ? pendingCount : <BellRing size={16} />}
+        </button>
         <button className="icon-button" onClick={onHelp} type="button" aria-label="Ayuda">
           <HelpCircle size={18} />
         </button>
@@ -687,6 +699,9 @@ function ExpenseForm({
   const [selected, setSelected] = useState<Record<string, boolean>>(() =>
     Object.fromEntries(people.map((p) => [p.id, initialShares ? p.id in initialShares : true]))
   );
+  const [hiddenFromNonParticipants, setHiddenFromNonParticipants] = useState(
+    initial?.hiddenFromNonParticipants ?? false
+  );
   const [customAmounts, setCustomAmounts] = useState<Record<string, string>>(() =>
     Object.fromEntries(
       people.map((p) => [p.id, initialShares && p.id in initialShares ? String(initialShares[p.id]) : ""])
@@ -727,6 +742,7 @@ function ExpenseForm({
         purchasedAt: date,
         note: note.trim(),
         receiptFile,
+        hiddenFromNonParticipants,
         participants
       });
       onClose();
@@ -813,6 +829,17 @@ function ExpenseForm({
           </div>
         </div>
 
+        <div className="split-toolbar people-scope">
+          <span>Personas incluidas</span>
+          <button
+            className="tiny-button"
+            onClick={() => setSelected(Object.fromEntries(people.map((person) => [person.id, true])))}
+            type="button"
+          >
+            Todos
+          </button>
+        </div>
+
         <div className="people-picker">
           {people.map((person) => {
             const isSelected = selected[person.id];
@@ -846,6 +873,18 @@ function ExpenseForm({
           })}
         </div>
 
+        <label className={`privacy-option ${hiddenFromNonParticipants ? "active" : ""}`}>
+          <input
+            checked={hiddenFromNonParticipants}
+            onChange={(event) => setHiddenFromNonParticipants(event.target.checked)}
+            type="checkbox"
+          />
+          <span>
+            <strong>Ocultar a quienes no participan</strong>
+            <small>Solo lo veran quien pago, quien lo creo y las personas seleccionadas.</small>
+          </span>
+        </label>
+
         {splitMode === "custom" ? (
           <div className={`difference-note ${validCustom ? "ok" : ""}`}>
             {validCustom
@@ -874,6 +913,7 @@ function ExpenseDetail({
   currentUser,
   onClose,
   onMarkPaid,
+  onPayForEveryone,
   onConfirm,
   onReject,
   onEdit,
@@ -883,6 +923,7 @@ function ExpenseDetail({
   currentUser: Person;
   onClose: () => void;
   onMarkPaid: (expenseId: string, personId: string, method: PaymentMethod, proofFile: File | null) => Promise<void>;
+  onPayForEveryone: (expense: Expense, method: PaymentMethod, proofFile: File | null) => Promise<void>;
   onConfirm: (expenseId: string, personId: string) => Promise<void>;
   onReject: (expenseId: string, personId: string) => Promise<void>;
   onEdit: (expense: Expense) => void;
@@ -891,6 +932,8 @@ function ExpenseDetail({
   const { getPerson } = useApp();
   const [method, setMethod] = useState<PaymentMethod>("transfer");
   const [proofFile, setProofFile] = useState<File | null>(null);
+  const [bulkMethod, setBulkMethod] = useState<PaymentMethod>("transfer");
+  const [bulkProofFile, setBulkProofFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -901,6 +944,18 @@ function ExpenseDetail({
   const canSendPayment =
     !!currentShare && currentShare.status !== "confirmed" && (!needsProof || !!proofFile) && !busy;
   const canManage = expense.createdBy === currentUser.id || expense.paidBy === currentUser.id;
+  const unsettledShares = expense.shares.filter(
+    (share) => share.personId !== expense.paidBy && share.status !== "confirmed"
+  );
+  const bulkTotal = unsettledShares.reduce((sum, share) => sum + share.amount, 0);
+  const reimbursementCount = unsettledShares.filter((share) => share.personId !== currentUser.id).length;
+  const bulkNeedsProof = bulkMethod !== "cash";
+  const canPayForEveryone =
+    expense.paidBy !== currentUser.id &&
+    unsettledShares.length > 0 &&
+    reimbursementCount > 0 &&
+    (!bulkNeedsProof || !!bulkProofFile) &&
+    !busy;
 
   async function run(action: () => Promise<void>) {
     setBusy(true);
@@ -1031,6 +1086,57 @@ function ExpenseDetail({
             >
               <BadgeCheck size={19} />
               {busy ? "Guardando…" : `Marcar ${money(currentShare.amount)} pagado`}
+            </button>
+          </div>
+        ) : null}
+
+        {expense.paidBy !== currentUser.id && unsettledShares.length > 0 && reimbursementCount > 0 ? (
+          <div className="payment-box bulk-pay-box">
+            <div className="bulk-pay-heading">
+              <div>
+                <strong>Pagar por todos</strong>
+                <span>
+                  Pagas {money(bulkTotal)} a {payer.shortName}. Luego NestLoop crea un reembolso para{" "}
+                  {reimbursementCount} {reimbursementCount === 1 ? "persona" : "personas"}.
+                </span>
+              </div>
+              <HandCoins size={22} />
+            </div>
+            <div className="split-toolbar">
+              <span>Como se pago</span>
+              <div className="segmented">
+                <button className={bulkMethod === "transfer" ? "active" : ""} onClick={() => setBulkMethod("transfer")} type="button">
+                  Transferencia
+                </button>
+                <button className={bulkMethod === "cash" ? "active" : ""} onClick={() => setBulkMethod("cash")} type="button">
+                  Efectivo
+                </button>
+              </div>
+            </div>
+            {bulkMethod !== "cash" ? (
+              <label className="file-pick">
+                <Upload size={18} />
+                <span>{bulkProofFile?.name || "Subir comprobante del pago completo"}</span>
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(event) => setBulkProofFile(event.target.files?.[0] ?? null)}
+                />
+              </label>
+            ) : (
+              <div className="cash-note">
+                <HandCoins size={19} />
+                <span>El gasto original se cerrara y las deudas restantes pasaran a ti.</span>
+              </div>
+            )}
+            <button
+              className="secondary-action full"
+              disabled={!canPayForEveryone}
+              onClick={() => run(() => onPayForEveryone(expense, bulkMethod, bulkProofFile))}
+              type="button"
+            >
+              <BadgeCheck size={19} />
+              {busy ? "Guardando..." : `Pagar todo (${money(bulkTotal)})`}
             </button>
           </div>
         ) : null}
@@ -1789,6 +1895,10 @@ export function NestLoopApp({
   const [showHelp, setShowHelp] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
+  const [notificationPermission, setNotificationPermission] = useState<NotificationPermission | "unsupported">(
+    "unsupported"
+  );
+  const previousPendingCount = useRef<number | null>(null);
 
   const hid = household.id;
 
@@ -1824,6 +1934,11 @@ export function NestLoopApp({
     };
   }, [hid]);
 
+  useEffect(() => {
+    if (typeof window === "undefined" || !("Notification" in window)) return;
+    setNotificationPermission(Notification.permission);
+  }, []);
+
   const appData = useMemo<AppData>(() => {
     const byId = new Map(people.map((p) => [p.id, p]));
     return {
@@ -1856,6 +1971,38 @@ export function NestLoopApp({
     return myPending + confirmations + turns;
   }, [currentUserId, expenses, rotations]);
 
+  useEffect(() => {
+    const previous = previousPendingCount.current;
+    previousPendingCount.current = pendingCount;
+    if (previous === null || pendingCount <= previous || notificationPermission !== "granted") return;
+
+    const title = pendingCount === 1 ? "Tienes un pendiente nuevo" : `${pendingCount} pendientes en NestLoop`;
+    const body = "Abre la app para revisar pagos, confirmaciones o turnos.";
+    const options: NotificationOptions = {
+      body,
+      icon: "/icon-192.png",
+      badge: "/icon-192.png",
+      tag: "nestloop-pending"
+    };
+
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.ready
+        .then((registration) => registration.showNotification(title, options))
+        .catch(() => new Notification(title, options));
+      return;
+    }
+    new Notification(title, options);
+  }, [notificationPermission, pendingCount]);
+
+  async function handleEnableNotifications() {
+    if (typeof window === "undefined" || !("Notification" in window)) {
+      setNotificationPermission("unsupported");
+      return;
+    }
+    const permission = await Notification.requestPermission();
+    setNotificationPermission(permission);
+  }
+
   // Acciones (lanzan error para que el formulario lo muestre)
   async function handleCreateExpense(input: NewExpenseInput) {
     await apiCreateExpense(hid, currentUserId, input);
@@ -1877,6 +2024,11 @@ export function NestLoopApp({
     proofFile: File | null
   ) {
     await markSharePaid(hid, expenseId, personId, method, proofFile);
+    await reloadExpenses();
+  }
+  async function handlePayForEveryone(expense: Expense, method: PaymentMethod, proofFile: File | null) {
+    await apiPayExpenseForEveryone(hid, expense.id, currentUserId, method, proofFile);
+    setActiveExpenseId(null);
     await reloadExpenses();
   }
   async function handleConfirm(expenseId: string, personId: string) {
@@ -1928,6 +2080,8 @@ export function NestLoopApp({
           <TopBar
             currentUser={currentUser}
             household={household}
+            notificationPermission={notificationPermission}
+            onEnableNotifications={handleEnableNotifications}
             onHelp={() => setShowHelp(true)}
             onSignOut={onSignOut}
             pendingCount={pendingCount}
@@ -2002,6 +2156,7 @@ export function NestLoopApp({
             onClose={() => setActiveExpenseId(null)}
             onConfirm={handleConfirm}
             onMarkPaid={handleMarkPaid}
+            onPayForEveryone={handlePayForEveryone}
             onReject={handleReject}
             onDelete={handleDeleteExpense}
             onEdit={(expense) => {

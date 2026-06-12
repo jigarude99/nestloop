@@ -219,6 +219,11 @@ button:disabled {
   font-weight: 800;
 }
 
+.notification-pill.enabled {
+  border-color: rgba(15, 159, 122, 0.35);
+  background: var(--mint);
+}
+
 .view-stack {
   display: grid;
   gap: 20px;
@@ -714,6 +719,10 @@ textarea:focus {
   font-weight: 850;
 }
 
+.people-scope {
+  align-items: center;
+}
+
 .segmented {
   display: inline-flex;
   overflow: hidden;
@@ -789,6 +798,40 @@ textarea:focus {
 .difference-note.ok {
   background: var(--mint-soft);
   color: #075f49;
+}
+
+.privacy-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fbfcf8;
+  color: var(--ink);
+  padding: 11px 12px;
+}
+
+.privacy-option.active {
+  border-color: rgba(15, 159, 122, 0.34);
+  background: var(--mint-soft);
+}
+
+.privacy-option input {
+  width: 20px;
+  min-height: 20px;
+  flex: 0 0 auto;
+  accent-color: var(--mint);
+}
+
+.privacy-option span {
+  display: grid;
+  gap: 2px;
+}
+
+.privacy-option small {
+  color: var(--muted);
+  font-weight: 700;
+  line-height: 1.35;
 }
 
 .detail-hero {
@@ -907,7 +950,39 @@ textarea:focus {
   padding: 12px;
 }
 
+.bulk-pay-box {
+  background:
+    linear-gradient(120deg, rgba(15, 159, 122, 0.16), transparent 58%),
+    var(--sun-soft);
+}
+
+.bulk-pay-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.bulk-pay-heading div {
+  display: grid;
+  gap: 3px;
+}
+
+.bulk-pay-heading strong {
+  font-size: 15px;
+}
+
+.bulk-pay-heading span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 750;
+  line-height: 1.35;
+}
+
 .cash-note {
+  display: flex;
+  align-items: center;
+  gap: 9px;
   min-height: 48px;
   border-radius: var(--radius);
   background: var(--sun-soft);
@@ -917,6 +992,9 @@ textarea:focus {
 }
 
 .timeline-note {
+  display: flex;
+  align-items: center;
+  gap: 7px;
   margin-top: 14px;
   font-size: 13px;
   font-weight: 750;
@@ -1263,15 +1341,49 @@ textarea:focus {
     font-size: 11px;
   }
 
+  .calendar-grid {
+    grid-template-columns: 1fr;
+    overflow-x: visible;
+    gap: 8px;
+  }
+
+  .day-card {
+    min-height: 0;
+    grid-template-columns: 54px minmax(0, 1fr);
+    align-items: start;
+    gap: 8px 10px;
+    padding: 10px;
+  }
+
+  .day-card > .day-name {
+    grid-column: 1;
+    border-right: 1px solid var(--line);
+    border-bottom: 0;
+    align-self: stretch;
+    padding: 8px 8px 8px 0;
+    text-align: left;
+  }
+
+  .day-card > .slot-pill,
+  .day-card > .open-slot {
+    grid-column: 2;
+  }
+
   .slot-pill {
-    min-height: 108px;
-    flex-direction: column;
-    justify-content: center;
-    text-align: center;
+    min-height: 64px;
+    flex-direction: row;
+    justify-content: flex-start;
+    gap: 8px;
+    padding: 9px;
+    text-align: left;
   }
 
   .slot-pill span {
-    justify-items: center;
+    justify-items: start;
+  }
+
+  .open-slot {
+    min-height: 58px;
   }
 
   .form-grid.two {

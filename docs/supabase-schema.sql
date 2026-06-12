@@ -34,6 +34,9 @@ create table public.expenses (
   note text,
   receipt_path text,
   created_by uuid not null references public.profiles(id),
+  hidden_from_non_participants boolean not null default false,
+  archived_at timestamptz,
+  reimburses_expense_id uuid references public.expenses(id) on delete set null,
   created_at timestamptz not null default now()
 );
 
@@ -156,6 +159,18 @@ as $$
     from public.expenses e
     where e.id = target_expense_id
       and public.is_household_member(e.household_id)
+      and e.archived_at is null
+      and (
+        e.hidden_from_non_participants = false
+        or e.created_by = auth.uid()
+        or e.paid_by = auth.uid()
+        or exists (
+          select 1
+          from public.expense_shares s
+          where s.expense_id = e.id
+            and s.profile_id = auth.uid()
+        )
+      )
   );
 $$;
 
@@ -196,7 +211,7 @@ using (
 
 create policy "members can read household expenses"
 on public.expenses for select
-using (public.is_household_member(household_id));
+using (public.can_read_expense(id));
 
 create policy "members can create household expenses"
 on public.expenses for insert

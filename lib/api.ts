@@ -33,6 +33,9 @@ export type Expense = {
   note: string;
   receiptName?: string;
   receiptPath?: string;
+  hiddenFromNonParticipants: boolean;
+  archivedAt?: string;
+  reimbursesExpenseId?: string;
   shares: ExpenseShare[];
 };
 
@@ -67,6 +70,7 @@ export type NewExpenseInput = {
   purchasedAt: string;
   note: string;
   receiptFile: File | null;
+  hiddenFromNonParticipants: boolean;
   participants: { personId: string; amount: number }[];
 };
 
@@ -128,10 +132,11 @@ export async function fetchExpenses(householdId: string): Promise<Expense[]> {
   const { data, error } = await supabase
     .from("expenses")
     .select(
-      "id,title,merchant,category,amount_cents,paid_by,created_by,purchased_at,note,receipt_path,created_at," +
+      "id,title,merchant,category,amount_cents,paid_by,created_by,purchased_at,note,receipt_path,created_at,hidden_from_non_participants,archived_at,reimburses_expense_id," +
         "shares:expense_shares(profile_id,amount_cents,status,payment_method,proof_path,sent_at,confirmed_at)"
     )
     .eq("household_id", householdId)
+    .is("archived_at", null)
     .order("created_at", { ascending: false });
 
   if (error) throw error;
@@ -149,6 +154,9 @@ export async function fetchExpenses(householdId: string): Promise<Expense[]> {
     note: row.note ?? "",
     receiptName: basename(row.receipt_path),
     receiptPath: row.receipt_path ?? undefined,
+    hiddenFromNonParticipants: row.hidden_from_non_participants ?? false,
+    archivedAt: row.archived_at ?? undefined,
+    reimbursesExpenseId: row.reimburses_expense_id ?? undefined,
     shares: (row.shares ?? []).map((s: any) => ({
       personId: s.profile_id,
       amount: fromCents(s.amount_cents),
@@ -191,7 +199,8 @@ export async function createExpense(
     purchased_at: input.purchasedAt,
     note: input.note || null,
     receipt_path: receiptPath,
-    created_by: currentUserId
+    created_by: currentUserId,
+    hidden_from_non_participants: input.hiddenFromNonParticipants
   });
   if (expErr) throw expErr;
 
@@ -241,6 +250,33 @@ export async function markSharePaid(
   if (error) throw error;
 }
 
+export async function payExpenseForEveryone(
+  householdId: string,
+  expenseId: string,
+  payerId: string,
+  method: PaymentMethod,
+  proofFile: File | null
+): Promise<void> {
+  const supabase = getSupabase();
+
+  let proofPath: string | null = null;
+  if (method !== "cash" && proofFile) {
+    const path = `${householdId}/${expenseId}/bulk-${payerId}-${Date.now()}-${safeName(proofFile.name)}`;
+    const { error: upErr } = await supabase.storage
+      .from(PROOFS)
+      .upload(path, proofFile, { upsert: false });
+    if (upErr) throw upErr;
+    proofPath = path;
+  }
+
+  const { error } = await supabase.rpc("pay_expense_for_everyone", {
+    p_expense_id: expenseId,
+    p_method: method,
+    p_proof_path: proofPath
+  });
+  if (error) throw error;
+}
+
 export async function setShareStatus(
   expenseId: string,
   personId: string,
@@ -272,7 +308,8 @@ export async function updateExpense(
     amount_cents: toCents(input.amount),
     paid_by: input.paidBy,
     purchased_at: input.purchasedAt,
-    note: input.note || null
+    note: input.note || null,
+    hidden_from_non_participants: input.hiddenFromNonParticipants
   };
 
   if (input.receiptFile) {
