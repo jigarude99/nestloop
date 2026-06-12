@@ -191,7 +191,7 @@ button:disabled {
 }
 
 .sync-pill,
-.notification-pill {
+.notification-button {
   display: inline-flex;
   min-height: 40px;
   align-items: center;
@@ -211,17 +211,36 @@ button:disabled {
   color: #075f49;
 }
 
-.notification-pill {
+.notification-button {
+  position: relative;
   width: 40px;
   padding: 0;
-  background: var(--ink);
-  color: white;
+  background: var(--surface);
+  color: var(--ink);
   font-weight: 800;
 }
 
-.notification-pill.enabled {
+.notification-button.enabled {
   border-color: rgba(15, 159, 122, 0.35);
+  background: var(--mint-soft);
+  color: #075f49;
+}
+
+.notification-button span {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  display: grid;
+  min-width: 22px;
+  height: 22px;
+  place-items: center;
+  border: 2px solid var(--bg);
+  border-radius: 999px;
   background: var(--mint);
+  color: white;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1;
 }
 
 .view-stack {
@@ -443,11 +462,13 @@ h2 {
   display: inline-grid;
   flex: 0 0 auto;
   place-items: center;
+  text-align: center;
   border: 1px solid color-mix(in srgb, var(--avatar-color) 28%, white);
   border-radius: 999px;
   background: var(--avatar-tint);
   color: var(--avatar-color);
   font-weight: 900;
+  line-height: 1;
 }
 
 .avatar-sm {
@@ -1103,10 +1124,10 @@ textarea:focus {
 }
 
 .slot-pill {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
   width: 100%;
   align-items: center;
-  justify-content: flex-start;
   gap: 10px;
   text-align: left;
   border: 1px solid color-mix(in srgb, var(--slot-color) 30%, var(--line));
@@ -1116,6 +1137,11 @@ textarea:focus {
   color: var(--ink);
   min-height: 76px;
   padding: 10px;
+}
+
+.slot-pill .avatar {
+  align-self: center;
+  justify-self: center;
 }
 
 .slot-pill:hover:not(:disabled) {
@@ -1130,6 +1156,7 @@ textarea:focus {
 .slot-pill span {
   display: grid;
   min-width: 0;
+  align-content: center;
   gap: 2px;
 }
 
@@ -1371,8 +1398,6 @@ textarea:focus {
 
   .slot-pill {
     min-height: 64px;
-    flex-direction: row;
-    justify-content: flex-start;
     gap: 8px;
     padding: 9px;
     text-align: left;

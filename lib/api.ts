@@ -61,6 +61,8 @@ export type ScheduleSlot = {
   label: string;
 };
 
+export type PushRegistrationResult = "granted" | "denied" | "unsupported";
+
 export type NewExpenseInput = {
   title: string;
   merchant: string;
@@ -91,6 +93,9 @@ export type NewSlotInput = {
 
 const RECEIPTS = "receipts";
 const PROOFS = "payment-proofs";
+const VAPID_PUBLIC_KEY =
+  process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ||
+  "BBntLEaWDQo3twD1_7gzHDqo7ladR0E1f7EN07aYcDsAqJLdjoxTPCHbn3OVwPMP9HosQWEJ0C5gCVNVH16IxZo";
 
 // ---------------------------------------------------------------------------
 // Utilidades
@@ -114,6 +119,12 @@ function basename(path?: string | null) {
   const parts = path.split("/");
   return parts[parts.length - 1];
 }
+function urlBase64ToUint8Array(value: string) {
+  const padding = "=".repeat((4 - (value.length % 4)) % 4);
+  const base64 = (value + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const rawData = window.atob(base64);
+  return Uint8Array.from([...rawData].map((char) => char.charCodeAt(0)));
+}
 /** Formatea "HH:MM" o "HH:MM:SS" a "6:00 p. m." para mostrar. */
 export function displayTime(value?: string | null) {
   if (!value) return "";
@@ -122,6 +133,68 @@ export function displayTime(value?: string | null) {
   const ampm = hour >= 12 ? "p. m." : "a. m.";
   const h12 = hour % 12 === 0 ? 12 : hour % 12;
   return `${h12}:${m} ${ampm}`;
+}
+
+// ---------------------------------------------------------------------------
+// PUSH NOTIFICATIONS
+// ---------------------------------------------------------------------------
+export async function registerPushNotifications(
+  householdId: string,
+  currentUserId: string
+): Promise<PushRegistrationResult> {
+  if (
+    typeof window === "undefined" ||
+    !("Notification" in window) ||
+    !("serviceWorker" in navigator) ||
+    !("PushManager" in window) ||
+    !VAPID_PUBLIC_KEY
+  ) {
+    return "unsupported";
+  }
+
+  const permission =
+    Notification.permission === "granted" ? "granted" : await Notification.requestPermission();
+  if (permission !== "granted") return permission === "denied" ? "denied" : "unsupported";
+
+  const registration = await navigator.serviceWorker.ready;
+  const existing = await registration.pushManager.getSubscription();
+  const subscription =
+    existing ??
+    (await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
+    }));
+
+  const json = subscription.toJSON();
+  const supabase = getSupabase();
+  const { error } = await supabase.from("push_subscriptions").upsert(
+    {
+      household_id: householdId,
+      profile_id: currentUserId,
+      endpoint: subscription.endpoint,
+      p256dh: json.keys?.p256dh,
+      auth: json.keys?.auth,
+      user_agent: navigator.userAgent,
+      enabled: true,
+      last_seen_at: new Date().toISOString()
+    },
+    { onConflict: "endpoint" }
+  );
+  if (error) throw error;
+  return "granted";
+}
+
+export async function triggerPushDispatch(): Promise<void> {
+  const supabase = getSupabase();
+  const {
+    data: { session }
+  } = await supabase.auth.getSession();
+  if (!session?.access_token) return;
+
+  await fetch("/api/notifications/push", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${session.access_token}` }
+  }).catch(() => {});
 }
 
 // ---------------------------------------------------------------------------

@@ -63,8 +63,10 @@ import {
   fetchSlots,
   markSharePaid,
   payExpenseForEveryone as apiPayExpenseForEveryone,
+  registerPushNotifications,
   setShareStatus,
   signedUrl,
+  triggerPushDispatch,
   undoRotation as apiUndoRotation,
   updateExpense as apiUpdateExpense,
   updateRotation as apiUpdateRotation,
@@ -75,6 +77,7 @@ import {
   type NewSlotInput,
   type PaymentMethod,
   type PaymentStatus,
+  type PushRegistrationResult,
   type Rotation,
   type RotationIcon,
   type ScheduleSlot
@@ -370,7 +373,7 @@ function TopBar({
   currentUser: Person;
   household: Household;
   pendingCount: number;
-  notificationPermission: NotificationPermission | "unsupported";
+  notificationPermission: NotificationPermission | PushRegistrationResult;
   onEnableNotifications: () => void;
   onSignOut: () => void;
   onHelp: () => void;
@@ -416,13 +419,14 @@ function TopBar({
           <span>{currentUser.shortName}</span>
         </span>
         <button
-          className={`notification-pill ${notificationPermission === "granted" ? "enabled" : ""}`}
+          className={`notification-button ${notificationPermission === "granted" ? "enabled" : ""}`}
           onClick={onEnableNotifications}
           type="button"
           title={notificationPermission === "granted" ? "Notificaciones activas" : "Activar notificaciones"}
           aria-label={`${pendingCount} pendientes`}
         >
-          {pendingCount > 0 ? pendingCount : <BellRing size={16} />}
+          <BellRing size={18} />
+          {pendingCount > 0 ? <span>{pendingCount}</span> : null}
         </button>
         <button className="icon-button" onClick={onHelp} type="button" aria-label="Ayuda">
           <HelpCircle size={18} />
@@ -1895,10 +1899,9 @@ export function NestLoopApp({
   const [showHelp, setShowHelp] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
-  const [notificationPermission, setNotificationPermission] = useState<NotificationPermission | "unsupported">(
-    "unsupported"
-  );
-  const previousPendingCount = useRef<number | null>(null);
+  const [notificationPermission, setNotificationPermission] = useState<
+    NotificationPermission | PushRegistrationResult
+  >("unsupported");
 
   const hid = household.id;
 
@@ -1971,46 +1974,26 @@ export function NestLoopApp({
     return myPending + confirmations + turns;
   }, [currentUserId, expenses, rotations]);
 
-  useEffect(() => {
-    const previous = previousPendingCount.current;
-    previousPendingCount.current = pendingCount;
-    if (previous === null || pendingCount <= previous || notificationPermission !== "granted") return;
-
-    const title = pendingCount === 1 ? "Tienes un pendiente nuevo" : `${pendingCount} pendientes en NestLoop`;
-    const body = "Abre la app para revisar pagos, confirmaciones o turnos.";
-    const options: NotificationOptions = {
-      body,
-      icon: "/icon-192.png",
-      badge: "/icon-192.png",
-      tag: "nestloop-pending"
-    };
-
-    if ("serviceWorker" in navigator) {
-      navigator.serviceWorker.ready
-        .then((registration) => registration.showNotification(title, options))
-        .catch(() => new Notification(title, options));
-      return;
-    }
-    new Notification(title, options);
-  }, [notificationPermission, pendingCount]);
-
   async function handleEnableNotifications() {
-    if (typeof window === "undefined" || !("Notification" in window)) {
+    try {
+      const result = await registerPushNotifications(hid, currentUserId);
+      setNotificationPermission(result);
+      if (result === "granted") void triggerPushDispatch();
+    } catch {
       setNotificationPermission("unsupported");
-      return;
     }
-    const permission = await Notification.requestPermission();
-    setNotificationPermission(permission);
   }
 
   // Acciones (lanzan error para que el formulario lo muestre)
   async function handleCreateExpense(input: NewExpenseInput) {
     await apiCreateExpense(hid, currentUserId, input);
     await reloadExpenses();
+    void triggerPushDispatch();
   }
   async function handleUpdateExpense(id: string, input: NewExpenseInput) {
     await apiUpdateExpense(hid, id, input);
     await reloadExpenses();
+    void triggerPushDispatch();
   }
   async function handleDeleteExpense(expense: Expense) {
     await apiDeleteExpense(expense);
@@ -2025,11 +2008,13 @@ export function NestLoopApp({
   ) {
     await markSharePaid(hid, expenseId, personId, method, proofFile);
     await reloadExpenses();
+    void triggerPushDispatch();
   }
   async function handlePayForEveryone(expense: Expense, method: PaymentMethod, proofFile: File | null) {
     await apiPayExpenseForEveryone(hid, expense.id, currentUserId, method, proofFile);
     setActiveExpenseId(null);
     await reloadExpenses();
+    void triggerPushDispatch();
   }
   async function handleConfirm(expenseId: string, personId: string) {
     await setShareStatus(expenseId, personId, "confirmed");
@@ -2038,10 +2023,12 @@ export function NestLoopApp({
   async function handleReject(expenseId: string, personId: string) {
     await setShareStatus(expenseId, personId, "rejected");
     await reloadExpenses();
+    void triggerPushDispatch();
   }
   async function handleCreateRotation(input: NewRotationInput) {
     await apiCreateRotation(hid, input);
     await reloadRotations();
+    void triggerPushDispatch();
   }
   async function handleUpdateRotation(id: string, input: NewRotationInput) {
     await apiUpdateRotation(id, input);
@@ -2054,6 +2041,7 @@ export function NestLoopApp({
   async function handleCompleteRotation(rotation: Rotation) {
     await apiCompleteRotation(rotation.id);
     await reloadRotations();
+    void triggerPushDispatch();
   }
   async function handleUndoRotation(rotation: Rotation) {
     await apiUndoRotation(rotation.id);
@@ -2062,10 +2050,12 @@ export function NestLoopApp({
   async function handleCreateSlot(input: NewSlotInput) {
     await apiCreateSlot(hid, currentUserId, input);
     await reloadSlots();
+    void triggerPushDispatch();
   }
   async function handleUpdateSlot(id: string, input: NewSlotInput) {
     await apiUpdateSlot(id, input);
     await reloadSlots();
+    void triggerPushDispatch();
   }
   async function handleDeleteSlot(id: string) {
     await apiDeleteSlot(id);

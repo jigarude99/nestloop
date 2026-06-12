@@ -1,4 +1,4 @@
-const CACHE_NAME = "nestloop-v7";
+const CACHE_NAME = "nestloop-v8";
 const APP_SHELL = [
   "/",
   "/manifest.json",
@@ -42,15 +42,39 @@ self.addEventListener("fetch", (event) => {
   );
 });
 
+self.addEventListener("push", (event) => {
+  const fallback = {
+    title: "NestLoop",
+    body: "Tienes algo pendiente en casa.",
+    url: "/",
+    icon: "/icon-192.png",
+    badge: "/icon-192.png"
+  };
+  const payload = event.data ? event.data.json() : fallback;
+  const data = { ...fallback, ...payload };
+
+  event.waitUntil(
+    self.registration.showNotification(data.title, {
+      body: data.body,
+      icon: data.icon,
+      badge: data.badge,
+      tag: data.tag || "nestloop",
+      renotify: true,
+      data: { url: data.url || "/" }
+    })
+  );
+});
+
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
+  const targetUrl = event.notification.data?.url || "/";
   event.waitUntil(
     self.clients
       .matchAll({ type: "window", includeUncontrolled: true })
       .then((clients) => {
-        const openClient = clients.find((client) => "focus" in client);
+        const openClient = clients.find((client) => "focus" in client && client.url.includes(self.location.origin));
         if (openClient) return openClient.focus();
-        if (self.clients.openWindow) return self.clients.openWindow("/");
+        if (self.clients.openWindow) return self.clients.openWindow(targetUrl);
         return undefined;
       })
   );
