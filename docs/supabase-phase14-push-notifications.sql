@@ -542,7 +542,7 @@ begin
     nd.body,
     nd.url,
     '/icon-192.png'::text,
-    '/icon-192.png'::text,
+    '/notification-badge.png'::text,
     ('nestloop-' || nd.kind || '-' || nd.subject_id::text)::text
   from public.notification_deliveries nd
   join public.notification_preferences pref

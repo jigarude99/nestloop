@@ -85,7 +85,7 @@ async function handlePush(request: Request) {
             body: item.body,
             url: item.url || "/",
             icon: item.icon || "/icon-192.png",
-            badge: item.badge || "/icon-192.png",
+            badge: item.badge && item.badge !== "/icon-192.png" ? item.badge : "/notification-badge.png",
             tag: item.tag || item.delivery_id
           })
         );

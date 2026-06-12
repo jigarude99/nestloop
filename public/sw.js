@@ -1,4 +1,4 @@
-const CACHE_NAME = "nestloop-v8";
+const CACHE_NAME = "nestloop-v9";
 const APP_SHELL = [
   "/",
   "/manifest.json",
@@ -6,6 +6,7 @@ const APP_SHELL = [
   "/icon-192.png",
   "/icon-512.png",
   "/icon-512-maskable.png",
+  "/notification-badge.png",
   "/icon.svg",
   "/icon.png"
 ];
@@ -48,7 +49,7 @@ self.addEventListener("push", (event) => {
     body: "Tienes algo pendiente en casa.",
     url: "/",
     icon: "/icon-192.png",
-    badge: "/icon-192.png"
+    badge: "/notification-badge.png"
   };
   const payload = event.data ? event.data.json() : fallback;
   const data = { ...fallback, ...payload };

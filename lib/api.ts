@@ -62,6 +62,19 @@ export type ScheduleSlot = {
 };
 
 export type PushRegistrationResult = "granted" | "denied" | "unsupported";
+export type NotificationKind = "expense_due" | "payment_confirmation" | "task_turn" | "schedule_slot";
+
+export type NotificationDelivery = {
+  id: string;
+  kind: NotificationKind;
+  title: string;
+  body: string;
+  url: string;
+  status: "pending" | "sent" | "resolved";
+  createdAt: string;
+  updatedAt: string;
+  lastSentAt?: string;
+};
 
 export type NewExpenseInput = {
   title: string;
@@ -195,6 +208,30 @@ export async function triggerPushDispatch(): Promise<void> {
     method: "POST",
     headers: { Authorization: `Bearer ${session.access_token}` }
   }).catch(() => {});
+}
+
+export async function fetchNotifications(householdId: string): Promise<NotificationDelivery[]> {
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from("notification_deliveries")
+    .select("id,kind,title,body,url,status,created_at,updated_at,last_sent_at")
+    .eq("household_id", householdId)
+    .order("updated_at", { ascending: false })
+    .limit(30);
+
+  if (error) throw error;
+
+  return (data ?? []).map((row: any) => ({
+    id: row.id,
+    kind: row.kind as NotificationKind,
+    title: row.title,
+    body: row.body,
+    url: row.url ?? "/",
+    status: row.status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    lastSentAt: row.last_sent_at ?? undefined
+  }));
 }
 
 // ---------------------------------------------------------------------------

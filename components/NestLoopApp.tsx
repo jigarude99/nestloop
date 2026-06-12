@@ -59,6 +59,7 @@ import {
   deleteSlot as apiDeleteSlot,
   displayTime,
   fetchExpenses,
+  fetchNotifications,
   fetchRotations,
   fetchSlots,
   markSharePaid,
@@ -75,6 +76,7 @@ import {
   type NewExpenseInput,
   type NewRotationInput,
   type NewSlotInput,
+  type NotificationDelivery,
   type PaymentMethod,
   type PaymentStatus,
   type PushRegistrationResult,
@@ -137,6 +139,29 @@ function shortDate(value: string) {
   return new Intl.DateTimeFormat("es", { month: "short", day: "numeric" }).format(
     new Date(`${value}T12:00:00`)
   );
+}
+
+function relativeTime(value?: string | null) {
+  if (!value) return "Ahora";
+  const diff = Date.now() - new Date(value).getTime();
+  const minute = 60_000;
+  const hour = minute * 60;
+  const day = hour * 24;
+  if (diff < minute) return "Ahora";
+  if (diff < hour) return `Hace ${Math.max(1, Math.round(diff / minute))} min`;
+  if (diff < day) return `Hace ${Math.max(1, Math.round(diff / hour))} h`;
+  return `Hace ${Math.max(1, Math.round(diff / day))} d`;
+}
+
+function notificationStorageKey(householdId: string, userId: string) {
+  return `nestloop:seen-notifications:${householdId}:${userId}`;
+}
+
+function notificationKindLabel(kind: NotificationDelivery["kind"]) {
+  if (kind === "expense_due") return "Pago pendiente";
+  if (kind === "payment_confirmation") return "Por confirmar";
+  if (kind === "task_turn") return "Turno";
+  return "Horario";
 }
 
 function relativeDate(value: string) {
@@ -206,7 +231,7 @@ function Avatar({ person, size = "md" }: { person: Person; size?: "sm" | "md" | 
       style={{ "--avatar-color": person.color, "--avatar-tint": person.tint } as CSSProperties}
       aria-label={person.name}
     >
-      {person.initials}
+      <span className="avatar-letter">{person.initials}</span>
     </span>
   );
 }
@@ -364,17 +389,17 @@ function AppNav({
 function TopBar({
   currentUser,
   household,
-  pendingCount,
+  unreadCount,
   notificationPermission,
-  onEnableNotifications,
+  onNotificationsClick,
   onSignOut,
   onHelp
 }: {
   currentUser: Person;
   household: Household;
-  pendingCount: number;
+  unreadCount: number;
   notificationPermission: NotificationPermission | PushRegistrationResult;
-  onEnableNotifications: () => void;
+  onNotificationsClick: () => void;
   onSignOut: () => void;
   onHelp: () => void;
 }) {
@@ -420,13 +445,13 @@ function TopBar({
         </span>
         <button
           className={`notification-button ${notificationPermission === "granted" ? "enabled" : ""}`}
-          onClick={onEnableNotifications}
+          onClick={onNotificationsClick}
           type="button"
-          title={notificationPermission === "granted" ? "Notificaciones activas" : "Activar notificaciones"}
-          aria-label={`${pendingCount} pendientes`}
+          title={notificationPermission === "granted" ? "Ver notificaciones" : "Activar y ver notificaciones"}
+          aria-label={`${unreadCount} notificaciones nuevas`}
         >
           <BellRing size={18} />
-          {pendingCount > 0 ? <span>{pendingCount}</span> : null}
+          {unreadCount > 0 ? <span>{unreadCount}</span> : null}
         </button>
         <button className="icon-button" onClick={onHelp} type="button" aria-label="Ayuda">
           <HelpCircle size={18} />
@@ -436,6 +461,103 @@ function TopBar({
         </button>
       </div>
     </header>
+  );
+}
+
+function NotificationsSheet({
+  notifications,
+  unreadIds,
+  onClose,
+  onMarkSeen,
+  onSelect
+}: {
+  notifications: NotificationDelivery[];
+  unreadIds: Set<string>;
+  onClose: () => void;
+  onMarkSeen: () => void;
+  onSelect: (notification: NotificationDelivery) => void;
+}) {
+  const unread = notifications.filter((notification) => unreadIds.has(notification.id));
+  const history = notifications.filter((notification) => !unreadIds.has(notification.id)).slice(0, 12);
+
+  return (
+    <div className="modal-backdrop" role="presentation" onClick={onClose}>
+      <div className="modal-sheet notification-sheet" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <div>
+            <p className="eyebrow">Campana</p>
+            <h2>Notificaciones</h2>
+          </div>
+          <button className="icon-button" onClick={onClose} type="button" aria-label="Cerrar">
+            <X size={20} />
+          </button>
+        </div>
+
+        {unread.length ? (
+          <section className="notification-section">
+            <div className="notification-section-title">
+              <strong>Nuevas</strong>
+              <span>{unread.length}</span>
+            </div>
+            <div className="notification-list">
+              {unread.map((notification) => (
+                <button
+                  className="notification-row unread"
+                  key={notification.id}
+                  onClick={() => onSelect(notification)}
+                  type="button"
+                >
+                  <span className="notification-dot" />
+                  <span>
+                    <strong>{notification.title}</strong>
+                    <small>{notification.body}</small>
+                    <em>
+                      {notificationKindLabel(notification.kind)} ·{" "}
+                      {relativeTime(notification.lastSentAt ?? notification.updatedAt)}
+                    </em>
+                  </span>
+                </button>
+              ))}
+            </div>
+          </section>
+        ) : (
+          <div className="notification-empty">
+            <CheckCircle2 size={24} />
+            <strong>Todo visto</strong>
+            <span>Cuando pase algo nuevo en casa, aparecerá aquí.</span>
+          </div>
+        )}
+
+        {history.length ? (
+          <section className="notification-section">
+            <div className="notification-section-title">
+              <strong>Historial reciente</strong>
+            </div>
+            <div className="notification-list compact">
+              {history.map((notification) => (
+                <button
+                  className={`notification-row ${unreadIds.has(notification.id) ? "unread" : ""}`}
+                  key={`history-${notification.id}`}
+                  onClick={() => onSelect(notification)}
+                  type="button"
+                >
+                  <span className="notification-kind">{notificationKindLabel(notification.kind)}</span>
+                  <span>
+                    <strong>{notification.title}</strong>
+                    <em>{relativeTime(notification.lastSentAt ?? notification.updatedAt)}</em>
+                  </span>
+                </button>
+              ))}
+            </div>
+          </section>
+        ) : null}
+
+        <button className="primary-action full" onClick={unread.length ? onMarkSeen : onClose} type="button">
+          <BadgeCheck size={19} />
+          {unread.length ? "Listo, marcar como vistas" : "Cerrar"}
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -1658,7 +1780,7 @@ function CalendarView({
                       style={{ "--slot-color": person.color, "--slot-tint": person.tint } as CSSProperties}
                     >
                       <Avatar person={person} size="sm" />
-                      <span>
+                      <span className="slot-copy">
                         <strong>{person.shortName}</strong>
                         <small className="slot-label">{slot.label}</small>
                         <small className="slot-time">
@@ -1897,6 +2019,9 @@ export function NestLoopApp({
   const [activeExpenseId, setActiveExpenseId] = useState<string | null>(null);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
   const [showHelp, setShowHelp] = useState(false);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [notifications, setNotifications] = useState<NotificationDelivery[]>([]);
+  const [seenNotificationIds, setSeenNotificationIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
   const [notificationPermission, setNotificationPermission] = useState<
@@ -1914,17 +2039,21 @@ export function NestLoopApp({
   const reloadSlots = useCallback(async () => {
     setSlots(await fetchSlots(hid));
   }, [hid]);
+  const reloadNotifications = useCallback(async () => {
+    setNotifications(await fetchNotifications(hid));
+  }, [hid]);
 
   useEffect(() => {
     let on = true;
     setLoading(true);
     setLoadError(false);
-    Promise.all([fetchExpenses(hid), fetchRotations(hid), fetchSlots(hid)])
-      .then(([e, r, s]) => {
+    Promise.all([fetchExpenses(hid), fetchRotations(hid), fetchSlots(hid), fetchNotifications(hid)])
+      .then(([e, r, s, n]) => {
         if (!on) return;
         setExpenses(e);
         setRotations(r);
         setSlots(s);
+        setNotifications(n);
       })
       .catch(() => {
         if (on) setLoadError(true);
@@ -1942,6 +2071,16 @@ export function NestLoopApp({
     setNotificationPermission(Notification.permission);
   }, []);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const raw = window.localStorage.getItem(notificationStorageKey(hid, currentUserId));
+      setSeenNotificationIds(new Set(raw ? (JSON.parse(raw) as string[]) : []));
+    } catch {
+      setSeenNotificationIds(new Set());
+    }
+  }, [currentUserId, hid]);
+
   const appData = useMemo<AppData>(() => {
     const byId = new Map(people.map((p) => [p.id, p]));
     return {
@@ -1954,51 +2093,84 @@ export function NestLoopApp({
   const currentUser = appData.getPerson(currentUserId);
   const activeExpense = expenses.find((expense) => expense.id === activeExpenseId);
 
-  const pendingCount = useMemo(() => {
-    const myPending = expenses
-      .flatMap((expense) => expense.shares.map((share) => ({ expense, share })))
-      .filter(
-        ({ expense, share }) =>
-          share.personId === currentUserId &&
-          expense.paidBy !== currentUserId &&
-          share.status !== "confirmed"
-      ).length;
+  const unreadNotificationIds = useMemo(() => {
+    return new Set(
+      notifications
+        .filter((notification) => notification.status !== "resolved" && !seenNotificationIds.has(notification.id))
+        .map((notification) => notification.id)
+    );
+  }, [notifications, seenNotificationIds]);
 
-    const confirmations = expenses
-      .filter((expense) => expense.paidBy === currentUserId)
-      .flatMap((expense) => expense.shares)
-      .filter((share) => share.status === "sent").length;
+  const unreadNotificationCount = unreadNotificationIds.size;
 
-    const turns = rotations.filter((rotation) => rotation.queue[rotation.currentIndex] === currentUserId).length;
+  const rememberNotificationsSeen = useCallback(
+    (ids: string[]) => {
+      if (!ids.length || typeof window === "undefined") return;
+      setSeenNotificationIds((current) => {
+        const next = new Set(current);
+        ids.forEach((id) => next.add(id));
+        window.localStorage.setItem(notificationStorageKey(hid, currentUserId), JSON.stringify([...next].slice(-200)));
+        return next;
+      });
+    },
+    [currentUserId, hid]
+  );
 
-    return myPending + confirmations + turns;
-  }, [currentUserId, expenses, rotations]);
-
-  async function handleEnableNotifications() {
+  async function handleEnableNotifications(): Promise<PushRegistrationResult> {
     try {
       const result = await registerPushNotifications(hid, currentUserId);
       setNotificationPermission(result);
       if (result === "granted") void triggerPushDispatch();
+      return result;
     } catch {
       setNotificationPermission("unsupported");
+      return "unsupported";
     }
+  }
+
+  async function handleNotificationsClick() {
+    if (notificationPermission !== "granted" && notificationPermission !== "denied") {
+      await handleEnableNotifications();
+    }
+    await reloadNotifications().catch(() => {});
+    setShowNotifications(true);
+  }
+
+  function handleMarkNotificationsSeen() {
+    rememberNotificationsSeen([...unreadNotificationIds]);
+    setShowNotifications(false);
+  }
+
+  function handleSelectNotification(notification: NotificationDelivery) {
+    rememberNotificationsSeen([notification.id]);
+    if (notification.kind === "expense_due" || notification.kind === "payment_confirmation") {
+      setActiveView("expenses");
+    } else if (notification.kind === "task_turn") {
+      setActiveView("tasks");
+    } else {
+      setActiveView("calendar");
+    }
+    setShowNotifications(false);
   }
 
   // Acciones (lanzan error para que el formulario lo muestre)
   async function handleCreateExpense(input: NewExpenseInput) {
     await apiCreateExpense(hid, currentUserId, input);
     await reloadExpenses();
+    await reloadNotifications().catch(() => {});
     void triggerPushDispatch();
   }
   async function handleUpdateExpense(id: string, input: NewExpenseInput) {
     await apiUpdateExpense(hid, id, input);
     await reloadExpenses();
+    await reloadNotifications().catch(() => {});
     void triggerPushDispatch();
   }
   async function handleDeleteExpense(expense: Expense) {
     await apiDeleteExpense(expense);
     setActiveExpenseId(null);
     await reloadExpenses();
+    await reloadNotifications().catch(() => {});
   }
   async function handleMarkPaid(
     expenseId: string,
@@ -2008,58 +2180,70 @@ export function NestLoopApp({
   ) {
     await markSharePaid(hid, expenseId, personId, method, proofFile);
     await reloadExpenses();
+    await reloadNotifications().catch(() => {});
     void triggerPushDispatch();
   }
   async function handlePayForEveryone(expense: Expense, method: PaymentMethod, proofFile: File | null) {
     await apiPayExpenseForEveryone(hid, expense.id, currentUserId, method, proofFile);
     setActiveExpenseId(null);
     await reloadExpenses();
+    await reloadNotifications().catch(() => {});
     void triggerPushDispatch();
   }
   async function handleConfirm(expenseId: string, personId: string) {
     await setShareStatus(expenseId, personId, "confirmed");
     await reloadExpenses();
+    await reloadNotifications().catch(() => {});
   }
   async function handleReject(expenseId: string, personId: string) {
     await setShareStatus(expenseId, personId, "rejected");
     await reloadExpenses();
+    await reloadNotifications().catch(() => {});
     void triggerPushDispatch();
   }
   async function handleCreateRotation(input: NewRotationInput) {
     await apiCreateRotation(hid, input);
     await reloadRotations();
+    await reloadNotifications().catch(() => {});
     void triggerPushDispatch();
   }
   async function handleUpdateRotation(id: string, input: NewRotationInput) {
     await apiUpdateRotation(id, input);
     await reloadRotations();
+    await reloadNotifications().catch(() => {});
   }
   async function handleDeleteRotation(id: string) {
     await apiDeleteRotation(id);
     await reloadRotations();
+    await reloadNotifications().catch(() => {});
   }
   async function handleCompleteRotation(rotation: Rotation) {
     await apiCompleteRotation(rotation.id);
     await reloadRotations();
+    await reloadNotifications().catch(() => {});
     void triggerPushDispatch();
   }
   async function handleUndoRotation(rotation: Rotation) {
     await apiUndoRotation(rotation.id);
     await reloadRotations();
+    await reloadNotifications().catch(() => {});
   }
   async function handleCreateSlot(input: NewSlotInput) {
     await apiCreateSlot(hid, currentUserId, input);
     await reloadSlots();
+    await reloadNotifications().catch(() => {});
     void triggerPushDispatch();
   }
   async function handleUpdateSlot(id: string, input: NewSlotInput) {
     await apiUpdateSlot(id, input);
     await reloadSlots();
+    await reloadNotifications().catch(() => {});
     void triggerPushDispatch();
   }
   async function handleDeleteSlot(id: string) {
     await apiDeleteSlot(id);
     await reloadSlots();
+    await reloadNotifications().catch(() => {});
   }
 
   return (
@@ -2071,10 +2255,10 @@ export function NestLoopApp({
             currentUser={currentUser}
             household={household}
             notificationPermission={notificationPermission}
-            onEnableNotifications={handleEnableNotifications}
+            onNotificationsClick={handleNotificationsClick}
             onHelp={() => setShowHelp(true)}
             onSignOut={onSignOut}
-            pendingCount={pendingCount}
+            unreadCount={unreadNotificationCount}
           />
 
           {loading ? (
@@ -2166,6 +2350,15 @@ export function NestLoopApp({
         ) : null}
 
         {showHelp ? <HelpSheet household={household} onClose={() => setShowHelp(false)} /> : null}
+        {showNotifications ? (
+          <NotificationsSheet
+            notifications={notifications}
+            onClose={() => setShowNotifications(false)}
+            onMarkSeen={handleMarkNotificationsSeen}
+            onSelect={handleSelectNotification}
+            unreadIds={unreadNotificationIds}
+          />
+        ) : null}
       </main>
     </AppDataContext.Provider>
   );
