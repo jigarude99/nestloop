@@ -221,6 +221,55 @@ function useLongPress(onLongPress: () => void, ms = 500) {
   };
 }
 
+/** Bloquea el scroll del fondo mientras un modal está abierto (robusto en iOS). */
+function useBodyScrollLock() {
+  useEffect(() => {
+    const y = window.scrollY;
+    const { style } = document.body;
+    const prev = {
+      position: style.position,
+      top: style.top,
+      left: style.left,
+      right: style.right,
+      overflow: style.overflow
+    };
+    style.position = "fixed";
+    style.top = `-${y}px`;
+    style.left = "0";
+    style.right = "0";
+    style.overflow = "hidden";
+    return () => {
+      style.position = prev.position;
+      style.top = prev.top;
+      style.left = prev.left;
+      style.right = prev.right;
+      style.overflow = prev.overflow;
+      window.scrollTo(0, y);
+    };
+  }, []);
+}
+
+/** Fondo común de todos los modales: centra la hoja y bloquea el scroll de atrás.
+ *  Si recibe onClose, tocar fuera de la hoja cierra el modal. */
+function ModalBackdrop({
+  children,
+  onClose
+}: {
+  children: React.ReactNode;
+  onClose?: () => void;
+}) {
+  useBodyScrollLock();
+  return (
+    <div
+      className="modal-backdrop"
+      role="presentation"
+      onClick={onClose ? (e) => { if (e.target === e.currentTarget) onClose(); } : undefined}
+    >
+      {children}
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Piezas visuales reutilizables
 // ---------------------------------------------------------------------------
@@ -311,8 +360,8 @@ function ItemActionsSheet({
   }
 
   return (
-    <div className="modal-backdrop" role="presentation" onClick={onClose}>
-      <div className="modal-sheet actions-sheet" onClick={(e) => e.stopPropagation()}>
+    <ModalBackdrop onClose={onClose}>
+      <div className="modal-sheet actions-sheet">
         <div className="modal-header">
           <div>
             <p className="eyebrow">{eyebrow}</p>
@@ -343,7 +392,7 @@ function ItemActionsSheet({
           Cancelar
         </button>
       </div>
-    </div>
+    </ModalBackdrop>
   );
 }
 
@@ -392,30 +441,15 @@ function TopBar({
   unreadCount,
   notificationPermission,
   onNotificationsClick,
-  onSignOut,
-  onHelp
+  onProfileClick
 }: {
   currentUser: Person;
   household: Household;
   unreadCount: number;
   notificationPermission: NotificationPermission | PushRegistrationResult;
   onNotificationsClick: () => void;
-  onSignOut: () => void;
-  onHelp: () => void;
+  onProfileClick: () => void;
 }) {
-  const [copied, setCopied] = useState(false);
-
-  async function copyCode() {
-    if (!household.invite_code) return;
-    try {
-      await navigator.clipboard.writeText(household.invite_code);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      /* ignore */
-    }
-  }
-
   return (
     <header className="top-bar">
       <div className="mobile-brand">
@@ -429,20 +463,6 @@ function TopBar({
         <strong>Hola, {currentUser.name}</strong>
       </div>
       <div className="top-actions">
-        <span className={`sync-pill ${hasSupabaseConfig ? "live" : ""}`}>
-          <Database size={15} />
-          {hasSupabaseConfig ? "En la nube" : "Local"}
-        </span>
-        {household.invite_code ? (
-          <button className="code-pill" onClick={copyCode} type="button" title="Código para invitar a tu familia">
-            <KeyRound size={14} />
-            {copied ? "¡Copiado!" : household.invite_code}
-          </button>
-        ) : null}
-        <span className="person-chip active">
-          <Avatar person={currentUser} size="sm" />
-          <span>{currentUser.shortName}</span>
-        </span>
         <button
           className={`notification-button ${notificationPermission === "granted" ? "enabled" : ""}`}
           onClick={onNotificationsClick}
@@ -453,14 +473,115 @@ function TopBar({
           <BellRing size={18} />
           {unreadCount > 0 ? <span>{unreadCount}</span> : null}
         </button>
-        <button className="icon-button" onClick={onHelp} type="button" aria-label="Ayuda">
-          <HelpCircle size={18} />
-        </button>
-        <button className="icon-button" onClick={onSignOut} type="button" aria-label="Cerrar sesión">
-          <LogOut size={18} />
+        <button className="profile-button" onClick={onProfileClick} type="button" aria-label="Mi perfil">
+          <Avatar person={currentUser} size="sm" />
+          <span className="profile-button-name">{currentUser.shortName}</span>
         </button>
       </div>
     </header>
+  );
+}
+
+/** Hoja de perfil: tu cuenta, la casa, el código de invitación, ayuda y salir. */
+function ProfileSheet({
+  currentUser,
+  household,
+  notificationPermission,
+  onEnableNotifications,
+  onHelp,
+  onSignOut,
+  onClose
+}: {
+  currentUser: Person;
+  household: Household;
+  notificationPermission: NotificationPermission | PushRegistrationResult;
+  onEnableNotifications: () => Promise<PushRegistrationResult>;
+  onHelp: () => void;
+  onSignOut: () => void;
+  onClose: () => void;
+}) {
+  const [copied, setCopied] = useState(false);
+  const [enabling, setEnabling] = useState(false);
+
+  async function copyCode() {
+    if (!household.invite_code) return;
+    try {
+      await navigator.clipboard.writeText(household.invite_code);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  async function enableNotifications() {
+    setEnabling(true);
+    try {
+      await onEnableNotifications();
+    } finally {
+      setEnabling(false);
+    }
+  }
+
+  return (
+    <ModalBackdrop onClose={onClose}>
+      <div className="modal-sheet profile-sheet">
+        <div className="modal-header">
+          <div>
+            <p className="eyebrow">Mi perfil</p>
+            <h2>{currentUser.name}</h2>
+          </div>
+          <button className="icon-button" onClick={onClose} type="button" aria-label="Cerrar">
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="profile-summary">
+          <Avatar person={currentUser} size="lg" />
+          <div>
+            <strong>{household.name}</strong>
+            <span>
+              {currentUser.role === "admin" ? "Administrador" : "Miembro"} ·{" "}
+              {hasSupabaseConfig ? "En la nube" : "Local"}
+            </span>
+          </div>
+        </div>
+
+        {household.invite_code ? (
+          <button className="invite-code compact" onClick={copyCode} type="button">
+            <KeyRound size={18} />
+            <span>{household.invite_code}</span>
+            <small>{copied ? "¡Copiado!" : "Código para invitar · toca para copiar"}</small>
+          </button>
+        ) : null}
+
+        {notificationPermission !== "granted" ? (
+          <button className="secondary-action full" disabled={enabling} onClick={enableNotifications} type="button">
+            <BellRing size={18} />
+            {enabling
+              ? "Activando…"
+              : notificationPermission === "denied"
+                ? "Avisos bloqueados en el navegador"
+                : "Activar avisos en este teléfono"}
+          </button>
+        ) : (
+          <div className="profile-note">
+            <BellRing size={16} />
+            <span>Los avisos están activados en este dispositivo.</span>
+          </div>
+        )}
+
+        <button className="secondary-action full" onClick={onHelp} type="button">
+          <HelpCircle size={18} />
+          ¿Cómo se usa NestLoop?
+        </button>
+
+        <button className="danger-action full" onClick={onSignOut} type="button">
+          <LogOut size={18} />
+          Cerrar sesión
+        </button>
+      </div>
+    </ModalBackdrop>
   );
 }
 
@@ -481,8 +602,8 @@ function NotificationsSheet({
   const history = notifications.filter((notification) => !unreadIds.has(notification.id)).slice(0, 12);
 
   return (
-    <div className="modal-backdrop" role="presentation" onClick={onClose}>
-      <div className="modal-sheet notification-sheet" onClick={(e) => e.stopPropagation()}>
+    <ModalBackdrop onClose={onClose}>
+      <div className="modal-sheet notification-sheet">
         <div className="modal-header">
           <div>
             <p className="eyebrow">Campana</p>
@@ -557,7 +678,7 @@ function NotificationsSheet({
           {unread.length ? "Listo, marcar como vistas" : "Cerrar"}
         </button>
       </div>
-    </div>
+    </ModalBackdrop>
   );
 }
 
@@ -879,7 +1000,7 @@ function ExpenseForm({
   }
 
   return (
-    <div className="modal-backdrop" role="presentation">
+    <ModalBackdrop>
       <form className="modal-sheet expense-form" onSubmit={submit}>
         <div className="modal-header">
           <div>
@@ -1030,7 +1151,7 @@ function ExpenseForm({
           {saving ? "Guardando…" : isEdit ? "Guardar cambios" : "Crear gasto"}
         </button>
       </form>
-    </div>
+    </ModalBackdrop>
   );
 }
 
@@ -1096,7 +1217,7 @@ function ExpenseDetail({
   }
 
   return (
-    <div className="modal-backdrop" role="presentation">
+    <ModalBackdrop onClose={onClose}>
       <div className="modal-sheet detail-sheet">
         <div className="modal-header">
           <div>
@@ -1299,7 +1420,7 @@ function ExpenseDetail({
           <span>Agregado {relativeDate(expense.createdAt)}</span>
         </div>
       </div>
-    </div>
+    </ModalBackdrop>
   );
 }
 
@@ -1494,7 +1615,15 @@ function RotationForm({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const chosen = people.filter((p) => queue[p.id]);
+  // Conserva el orden original del turno al editar; los nuevos van al final.
+  const orderedIds = useMemo(() => {
+    const base = initial ? initial.queue.filter((id) => queue[id]) : [];
+    const extras = people.map((p) => p.id).filter((id) => queue[id] && !base.includes(id));
+    return [...base, ...extras];
+  }, [initial, people, queue]);
+  const chosen = orderedIds
+    .map((id) => people.find((p) => p.id === id))
+    .filter((p): p is Person => !!p);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -1516,7 +1645,7 @@ function RotationForm({
   }
 
   return (
-    <div className="modal-backdrop" role="presentation">
+    <ModalBackdrop>
       <form className="modal-sheet schedule-form" onSubmit={submit}>
         <div className="modal-header">
           <div>
@@ -1570,7 +1699,7 @@ function RotationForm({
           {saving ? "Guardando…" : isEdit ? "Guardar cambios" : "Crear turno"}
         </button>
       </form>
-    </div>
+    </ModalBackdrop>
   );
 }
 
@@ -1672,7 +1801,7 @@ function ScheduleForm({
   }
 
   return (
-    <div className="modal-backdrop" role="presentation">
+    <ModalBackdrop>
       <form className="modal-sheet schedule-form" onSubmit={submit}>
         <div className="modal-header">
           <div>
@@ -1723,7 +1852,7 @@ function ScheduleForm({
           {saving ? "Guardando…" : isEdit ? "Guardar cambios" : "Agregar horario"}
         </button>
       </form>
-    </div>
+    </ModalBackdrop>
   );
 }
 
@@ -1967,7 +2096,7 @@ function HelpSheet({ household, onClose }: { household: Household; onClose: () =
   ];
 
   return (
-    <div className="modal-backdrop" role="presentation">
+    <ModalBackdrop onClose={onClose}>
       <div className="modal-sheet help-sheet">
         <div className="modal-header">
           <div>
@@ -1994,7 +2123,7 @@ function HelpSheet({ household, onClose }: { household: Household; onClose: () =
           Entendido
         </button>
       </div>
-    </div>
+    </ModalBackdrop>
   );
 }
 
@@ -2019,6 +2148,7 @@ export function NestLoopApp({
   const [activeExpenseId, setActiveExpenseId] = useState<string | null>(null);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
   const [showHelp, setShowHelp] = useState(false);
+  const [showProfile, setShowProfile] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const [notifications, setNotifications] = useState<NotificationDelivery[]>([]);
   const [seenNotificationIds, setSeenNotificationIds] = useState<Set<string>>(new Set());
@@ -2256,8 +2386,7 @@ export function NestLoopApp({
             household={household}
             notificationPermission={notificationPermission}
             onNotificationsClick={handleNotificationsClick}
-            onHelp={() => setShowHelp(true)}
-            onSignOut={onSignOut}
+            onProfileClick={() => setShowProfile(true)}
             unreadCount={unreadNotificationCount}
           />
 
@@ -2350,6 +2479,20 @@ export function NestLoopApp({
         ) : null}
 
         {showHelp ? <HelpSheet household={household} onClose={() => setShowHelp(false)} /> : null}
+        {showProfile ? (
+          <ProfileSheet
+            currentUser={currentUser}
+            household={household}
+            notificationPermission={notificationPermission}
+            onEnableNotifications={handleEnableNotifications}
+            onHelp={() => {
+              setShowProfile(false);
+              setShowHelp(true);
+            }}
+            onSignOut={onSignOut}
+            onClose={() => setShowProfile(false)}
+          />
+        ) : null}
         {showNotifications ? (
           <NotificationsSheet
             notifications={notifications}

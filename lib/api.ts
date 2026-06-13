@@ -180,19 +180,15 @@ export async function registerPushNotifications(
 
   const json = subscription.toJSON();
   const supabase = getSupabase();
-  const { error } = await supabase.from("push_subscriptions").upsert(
-    {
-      household_id: householdId,
-      profile_id: currentUserId,
-      endpoint: subscription.endpoint,
-      p256dh: json.keys?.p256dh,
-      auth: json.keys?.auth,
-      user_agent: navigator.userAgent,
-      enabled: true,
-      last_seen_at: new Date().toISOString()
-    },
-    { onConflict: "endpoint" }
-  );
+  // RPC SECURITY DEFINER: reasigna el endpoint al usuario actual aunque la
+  // suscripción del navegador estuviera registrada a nombre de otro miembro.
+  const { error } = await supabase.rpc("register_push_subscription", {
+    p_household_id: householdId,
+    p_endpoint: subscription.endpoint,
+    p_p256dh: json.keys?.p256dh,
+    p_auth: json.keys?.auth,
+    p_user_agent: navigator.userAgent
+  });
   if (error) throw error;
   return "granted";
 }

@@ -255,6 +255,26 @@ Auditoría visual completa en móvil (la familia usa teléfonos). Sugerencias co
 
 </details>
 
+### Fases 12–14 — Hechas por Codex (2026-06-11/12) ✅
+
+Trabajo realizado por el agente Codex (documentado en `docs/supabase-phase12..14*.sql`):
+- **Fase 12**: propiedad de horarios (`schedule_slots.created_by` + políticas: solo el creador o un admin edita/borra).
+- **Fase 13**: privacidad de gastos (`hidden_from_non_participants`, política `can_read_expense` la respeta) y **"Pagar por todos"** (RPC `pay_expense_for_everyone`: archiva el gasto original y crea un gasto de reembolso para los que deben).
+- **Fase 14**: **notificaciones push reales** (tablas `push_subscriptions`/`notification_deliveries`/`notification_preferences`, triggers que encolan avisos por gasto/confirmación/turno/horario, recordatorios cada 3 días, RPCs `collect_due_push_notifications`/`mark_push_notifications_sent` validados por secreto SHA-256, ruta `/api/notifications/push` con web-push y cron diario en `vercel.json`, campana con historial en la UI). Claves VAPID y `NOTIFICATION_CRON_SECRET` configuradas en Vercel (verificado: el endpoint responde 401 sin auth, no 500). Familia actual: 5 miembros, 2 suscripciones push activas, envíos reales confirmados (`send_count > 0`).
+
+### Fase 15 — Revisión integral post-Codex ✅ COMPLETADA (2026-06-12)
+
+Auditoría completa del código de las fases 12–14 + arreglos (verificado: build, flujo completo en navegador móvil con usuario/casa de prueba aislados y luego borrados, consola sin errores, datos de la familia intactos):
+
+1. **Cron de recordatorios arreglado**: Vercel Cron manda `Authorization: Bearer ${CRON_SECRET}` (esa env var exacta); la ruta solo aceptaba `NOTIFICATION_CRON_SECRET` → el cron diario daba 401 en silencio. Ahora la ruta acepta ambas variables y también identifica el user-agent `vercel-cron/` (riesgo bajo: solo dispara envíos ya vencidos e idempotentes).
+2. **Registro de push robusto en teléfonos compartidos**: nuevo RPC `register_push_subscription` (SECURITY DEFINER) reasigna el endpoint del navegador al usuario actual; antes el upsert fallaba con RLS si la suscripción era de otro miembro. Cliente actualizado. (`docs/supabase-phase15-push-register-day-names.sql`)
+3. **Aviso de horario con nombre de día** ("el martes" en vez de "el dia 2").
+4. **Barra superior móvil rediseñada**: solo campana + avatar (botón de perfil). Nueva **hoja "Mi perfil"**: casa, código de invitación (copiar), activar avisos, guía de uso y cerrar sesión. Se eliminaron de la barra el sync-pill, code-pill, ayuda y salir.
+5. **Modales arreglados de raíz**: componente común `ModalBackdrop` + `useBodyScrollLock` (bloqueo de scroll del fondo robusto en iOS), centrado vertical (`place-items: center`), `overscroll-behavior: contain`; tocar fuera cierra las hojas informativas pero NO los formularios (no se pierde lo escrito).
+6. **Horario de otra persona ya no se ve "apagado"** (el estilo global de botón deshabilitado lo desteñía).
+7. **Editar un turno conserva el orden original** de la rotación (antes se reordenaba según la lista de personas).
+8. **Ícono maskable regenerado con zona segura** (Android ya no recorta el dibujo en íconos circulares); `maximumScale` eliminado del viewport (accesibilidad: la familia puede hacer zoom); service worker a v10.
+
 ---
 
 ## 5. Reglas de trabajo para el agente

@@ -226,6 +226,87 @@ button:disabled {
   color: #075f49;
 }
 
+/* Botón de perfil (avatar + nombre) que abre la hoja "Mi perfil" */
+.profile-button {
+  display: inline-flex;
+  min-height: 40px;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink);
+  font-weight: 800;
+  padding: 4px 14px 4px 5px;
+}
+
+.profile-button:hover {
+  border-color: var(--ink);
+}
+
+.profile-button-name {
+  font-size: 14px;
+}
+
+.profile-sheet {
+  display: grid;
+  width: min(420px, 100%);
+  gap: 12px;
+}
+
+.profile-summary {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  border-radius: var(--radius);
+  background: var(--soft);
+  padding: 13px 14px;
+}
+
+.profile-summary strong {
+  display: block;
+  font-size: 16px;
+}
+
+.profile-summary span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.profile-note {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 46px;
+  border-radius: var(--radius);
+  background: var(--mint-soft);
+  color: #075f49;
+  font-size: 13.5px;
+  font-weight: 800;
+  padding: 0 12px;
+}
+
+.invite-code.compact {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 11px;
+  padding: 11px 14px;
+}
+
+.invite-code.compact span {
+  font-size: 20px;
+  letter-spacing: 0.16em;
+}
+
+.invite-code.compact small {
+  flex: 1;
+  min-width: 0;
+  text-align: right;
+}
+
 .notification-button span {
   position: absolute;
   top: -6px;
@@ -622,8 +703,9 @@ h2 {
   inset: 0;
   z-index: 60;
   display: grid;
-  place-items: end center;
-  overflow: auto;
+  place-items: center;
+  overflow: hidden;
+  overscroll-behavior: contain;
   background: rgba(23, 32, 27, 0.36);
   padding: 26px;
 }
@@ -1264,6 +1346,14 @@ textarea:focus {
   padding: 10px;
 }
 
+/* Horario de otra persona: se ve normal, solo no se puede tocar */
+.slot-pill:disabled,
+.slot-pill.readonly {
+  opacity: 1;
+  cursor: default;
+  transform: none;
+}
+
 .slot-pill .avatar {
   align-self: center;
   justify-self: center;
@@ -1550,13 +1640,12 @@ textarea:focus {
 }
 
 @media (max-width: 540px) {
-  .person-chip span:not(.avatar) {
-    display: none;
+  /* En teléfono el botón de perfil es solo el avatar, redondo y limpio */
+  .profile-button {
+    padding: 4px;
   }
 
-  /* El código de invitación vive grande en "Personas"; aquí estorba.
-     Especificidad alta porque la regla base de .code-pill va después en el archivo. */
-  .top-actions .code-pill {
+  .profile-button-name {
     display: none;
   }
 
