@@ -88,6 +88,9 @@ export type Settlement = {
   proofPath?: string;
   createdBy: string;
   createdAt: string;
+  reversedAt?: string;
+  reversedBy?: string;
+  reverseReason?: string;
 };
 
 export type NewExpenseInput = {
@@ -666,7 +669,7 @@ export async function fetchSettlements(householdId: string): Promise<Settlement[
   const { data, error } = await supabase
     .from("settlements")
     .select(
-      "id,from_profile,to_profile,net_cents,gross_owed_cents,gross_owing_cents,shares_cleared,method,proof_path,created_by,created_at"
+      "id,from_profile,to_profile,net_cents,gross_owed_cents,gross_owing_cents,shares_cleared,method,proof_path,created_by,created_at,reversed_at,reversed_by,reverse_reason"
     )
     .eq("household_id", householdId)
     .order("created_at", { ascending: false })
@@ -683,7 +686,10 @@ export async function fetchSettlements(householdId: string): Promise<Settlement[
     method: row.method ?? undefined,
     proofPath: row.proof_path ?? undefined,
     createdBy: row.created_by,
-    createdAt: row.created_at
+    createdAt: row.created_at,
+    reversedAt: row.reversed_at ?? undefined,
+    reversedBy: row.reversed_by ?? undefined,
+    reverseReason: row.reverse_reason ?? undefined
   }));
 }
 
@@ -714,10 +720,31 @@ export async function settleWith(
   return { netAmount: fromCents(result.net_cents ?? 0), cleared: result.cleared ?? 0 };
 }
 
+export async function undoSettlement(settlementId: string): Promise<{ restored: number }> {
+  const supabase = getSupabase();
+  const { data, error } = await supabase.rpc("undo_settlement", {
+    p_settlement_id: settlementId,
+    p_reason: "Deshecho desde la app"
+  });
+  if (error) throw new Error(undoSettlementErrorMessage(error.message));
+  const result = (data ?? {}) as { restored?: number };
+  return { restored: result.restored ?? 0 };
+}
+
 function settleErrorMessage(message: string): string {
+  if (message.includes("Comprobante requerido")) {
+    return "Para saldar por transferencia necesitas subir un comprobante.";
+  }
   if (message.includes("No hay cuentas")) return "No hay cuentas que saldar con esta persona.";
   if (message.includes("No comparten")) return "Esta persona no está en tu casa.";
   return "No se pudo saldar la cuenta. Intenta de nuevo.";
+}
+
+function undoSettlementErrorMessage(message: string): string {
+  if (message.includes("Saldo ya deshecho")) return "Ese saldo ya fue deshecho.";
+  if (message.includes("No hay cuotas")) return "No hay cuotas para restaurar en ese saldo.";
+  if (message.includes("No autorizado")) return "No tienes permiso para deshacer ese saldo.";
+  return "No se pudo deshacer el saldo. Intenta de nuevo.";
 }
 
 // ---------------------------------------------------------------------------

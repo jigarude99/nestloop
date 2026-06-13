@@ -73,6 +73,7 @@ import {
   signedUrl,
   triggerPushDispatch,
   undoRotation as apiUndoRotation,
+  undoSettlement as apiUndoSettlement,
   updateExpense as apiUpdateExpense,
   updateRotation as apiUpdateRotation,
   updateSlot as apiUpdateSlot,
@@ -2013,6 +2014,7 @@ function BalanceSheet({
   );
   const [method, setMethod] = useState<PaymentMethod>("transfer");
   const [proofFile, setProofFile] = useState<File | null>(null);
+  const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -2020,7 +2022,19 @@ function BalanceSheet({
   const net = pair.net;
   const iAmNetDebtor = net > 0;
   const settled = !hasOpen;
+  const openCount = pair.iOweItems.length + pair.theyOweItems.length;
+  const transferProofRequired = iAmNetDebtor && method === "transfer";
+  const missingProof = transferProofRequired && !proofFile;
   async function settle() {
+    if (missingProof) {
+      setError("Sube el comprobante antes de saldar por transferencia.");
+      return;
+    }
+    if (!confirming) {
+      setError(null);
+      setConfirming(true);
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -2115,10 +2129,24 @@ function BalanceSheet({
                   <div className="split-toolbar">
                     <span>Cómo pagaste</span>
                     <div className="segmented">
-                      <button className={method === "transfer" ? "active" : ""} onClick={() => setMethod("transfer")} type="button">
+                      <button
+                        className={method === "transfer" ? "active" : ""}
+                        onClick={() => {
+                          setMethod("transfer");
+                          setConfirming(false);
+                        }}
+                        type="button"
+                      >
                         Transferencia
                       </button>
-                      <button className={method === "cash" ? "active" : ""} onClick={() => setMethod("cash")} type="button">
+                      <button
+                        className={method === "cash" ? "active" : ""}
+                        onClick={() => {
+                          setMethod("cash");
+                          setConfirming(false);
+                        }}
+                        type="button"
+                      >
                         Efectivo
                       </button>
                     </div>
@@ -2126,22 +2154,48 @@ function BalanceSheet({
                   {method !== "cash" ? (
                     <label className="file-pick">
                       <Upload size={18} />
-                      <span>{proofFile?.name || "Subir comprobante (opcional)"}</span>
+                      <span>{proofFile?.name || "Subir comprobante (obligatorio)"}</span>
                       <input
                         type="file"
                         accept="image/*"
-                        onChange={(event) => setProofFile(event.target.files?.[0] ?? null)}
+                        onChange={(event) => {
+                          setProofFile(event.target.files?.[0] ?? null);
+                          setConfirming(false);
+                        }}
                       />
                     </label>
                   ) : null}
                 </>
               ) : null}
+              {missingProof ? (
+                <div className="settle-warning">
+                  <Upload size={18} />
+                  <span>Para transferencia, NestLoop necesita una captura antes de cerrar estas cuentas.</span>
+                </div>
+              ) : null}
+              {confirming ? (
+                <div className="settle-confirm-box">
+                  <ShieldCheck size={19} />
+                  <div>
+                    <strong>Revisa antes de saldar</strong>
+                    <span>
+                      Se cerrarán {openCount} {openCount === 1 ? "cuenta" : "cuentas"} entre {me.shortName} y{" "}
+                      {person.shortName}. Si fue un error, podrás deshacerlo desde el historial.
+                    </span>
+                  </div>
+                  <button className="ghost-action full" onClick={() => setConfirming(false)} type="button">
+                    Volver a revisar
+                  </button>
+                </div>
+              ) : null}
               {error ? <div className="auth-alert error">{error}</div> : null}
-              <button className="primary-action full" disabled={busy} onClick={settle} type="button">
+              <button className="primary-action full" disabled={busy || missingProof} onClick={settle} type="button">
                 <Handshake size={19} />
                 {busy
                   ? "Saldando…"
-                  : net > 0
+                  : !confirming
+                    ? "Revisar antes de saldar"
+                    : net > 0
                     ? `Saldar: le pagué ${money(net)}`
                     : net < 0
                       ? `Saldar: ${person.shortName} me pagó ${money(Math.abs(net))}`
@@ -2380,6 +2434,7 @@ type HistoryEvent = {
   amount?: number;
   bucket?: "receipts" | "payment-proofs";
   path?: string;
+  settlement?: Settlement;
 };
 
 function buildHistory(expenses: Expense[], settlements: Settlement[], getPerson: (id: string) => Person): HistoryEvent[] {
@@ -2416,11 +2471,12 @@ function buildHistory(expenses: Expense[], settlements: Settlement[], getPerson:
   }
 
   for (const s of settlements) {
+    const reversed = !!s.reversedAt;
     events.push({
       id: `set-${s.id}`,
-      at: s.createdAt,
-      icon: Handshake,
-      tone: "sky",
+      at: s.reversedAt ?? s.createdAt,
+      icon: reversed ? RotateCcw : Handshake,
+      tone: reversed ? "coral" : "sky",
       title: `${getPerson(s.fromProfile).shortName} saldó con ${getPerson(s.toProfile).shortName}`,
       detail:
         s.grossOwed > 0 && s.grossOwing > 0
@@ -2428,17 +2484,28 @@ function buildHistory(expenses: Expense[], settlements: Settlement[], getPerson:
           : `${s.sharesCleared} ${s.sharesCleared === 1 ? "cuenta cerrada" : "cuentas cerradas"}`,
       amount: s.netAmount,
       bucket: s.proofPath ? "payment-proofs" : undefined,
-      path: s.proofPath
+      path: s.proofPath,
+      settlement: s
     });
   }
 
   return events.sort((a, b) => (a.at < b.at ? 1 : -1));
 }
 
-function HistorySheet({ householdId, onClose }: { householdId: string; onClose: () => void }) {
+function HistorySheet({
+  householdId,
+  onClose,
+  onUndoSettlement
+}: {
+  householdId: string;
+  onClose: () => void;
+  onUndoSettlement: (settlementId: string) => Promise<void>;
+}) {
   const { getPerson } = useApp();
   const [events, setEvents] = useState<HistoryEvent[] | null>(null);
   const [error, setError] = useState(false);
+  const [confirmUndoId, setConfirmUndoId] = useState<string | null>(null);
+  const [undoingId, setUndoingId] = useState<string | null>(null);
   const [viewing, setViewing] = useState<{ bucket: "receipts" | "payment-proofs"; path: string; title: string } | null>(null);
 
   useEffect(() => {
@@ -2454,6 +2521,31 @@ function HistorySheet({ householdId, onClose }: { householdId: string; onClose: 
       on = false;
     };
   }, [householdId, getPerson]);
+
+  async function refreshHistory() {
+    setError(false);
+    setEvents(null);
+    const [expenses, settlements] = await Promise.all([fetchExpenses(householdId, true), fetchSettlements(householdId)]);
+    setEvents(buildHistory(expenses, settlements, getPerson));
+  }
+
+  async function handleUndoSettlement(settlementId: string) {
+    if (confirmUndoId !== settlementId) {
+      setConfirmUndoId(settlementId);
+      return;
+    }
+    setUndoingId(settlementId);
+    setError(false);
+    try {
+      await onUndoSettlement(settlementId);
+      setConfirmUndoId(null);
+      await refreshHistory();
+    } catch {
+      setError(true);
+    } finally {
+      setUndoingId(null);
+    }
+  }
 
   return (
     <ModalBackdrop onClose={onClose}>
@@ -2485,6 +2577,11 @@ function HistorySheet({ householdId, onClose }: { householdId: string; onClose: 
             {events.map((event) => {
               const Icon = event.icon;
               const clickable = !!(event.bucket && event.path);
+              const settlement = event.settlement;
+              const reversed = !!settlement?.reversedAt;
+              const canUndo = !!settlement && !reversed;
+              const isConfirmingUndo = confirmUndoId === settlement?.id;
+              const isUndoing = undoingId === settlement?.id;
               return (
                 <div
                   className={`history-row ${clickable ? "clickable" : ""}`}
@@ -2497,13 +2594,35 @@ function HistorySheet({ householdId, onClose }: { householdId: string; onClose: 
                 >
                   <IconBubble icon={Icon} tone={event.tone} />
                   <span className="history-main">
-                    <strong>{event.title}</strong>
-                    <small>{event.detail}</small>
+                    <strong>{reversed ? "Saldo deshecho" : event.title}</strong>
+                    <small>
+                      {reversed
+                        ? `${settlement?.sharesCleared ?? 0} ${
+                            settlement?.sharesCleared === 1 ? "cuenta restaurada" : "cuentas restauradas"
+                          }`
+                        : event.detail}
+                    </small>
+                    {isConfirmingUndo ? <em>Toca Confirmar para volver a abrir esas cuentas.</em> : null}
                     <em>{relativeDate(event.at)}</em>
                   </span>
                   <span className="history-side">
                     {event.amount !== undefined ? <strong>{money(event.amount)}</strong> : null}
                     {clickable ? <Camera size={15} /> : null}
+                    {canUndo ? (
+                      <button
+                        className={`undo-link ${isConfirmingUndo ? "confirming" : ""}`}
+                        disabled={isUndoing}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void handleUndoSettlement(settlement.id);
+                        }}
+                        type="button"
+                      >
+                        {isUndoing ? "Deshaciendo..." : isConfirmingUndo ? "Confirmar" : "Deshacer"}
+                      </button>
+                    ) : reversed ? (
+                      <small className="history-tag">Deshecho</small>
+                    ) : null}
                   </span>
                 </div>
               );
@@ -2795,6 +2914,12 @@ export function NestLoopApp({
     await reloadNotifications().catch(() => {});
   }
 
+  async function handleUndoSettlement(settlementId: string) {
+    await apiUndoSettlement(settlementId);
+    await reloadExpenses();
+    await reloadNotifications().catch(() => {});
+  }
+
   return (
     <AppDataContext.Provider value={appData}>
       <main className="app-shell">
@@ -2938,7 +3063,13 @@ export function NestLoopApp({
             person={balancePerson}
           />
         ) : null}
-        {showHistory ? <HistorySheet householdId={hid} onClose={() => setShowHistory(false)} /> : null}
+        {showHistory ? (
+          <HistorySheet
+            householdId={hid}
+            onClose={() => setShowHistory(false)}
+            onUndoSettlement={handleUndoSettlement}
+          />
+        ) : null}
       </main>
     </AppDataContext.Provider>
   );

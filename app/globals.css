@@ -1615,6 +1615,42 @@ textarea:focus {
   padding: 12px;
 }
 
+.settle-warning,
+.settle-confirm-box {
+  display: grid;
+  gap: 8px;
+  border-radius: var(--radius);
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.4;
+  padding: 12px;
+}
+
+.settle-warning {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  border: 1px solid color-mix(in srgb, var(--coral) 32%, white);
+  background: var(--coral-soft);
+  color: #9a382d;
+}
+
+.settle-confirm-box {
+  grid-template-columns: auto minmax(0, 1fr);
+  border: 1px solid rgba(15, 159, 122, 0.28);
+  background: var(--mint-soft);
+  color: #075f49;
+}
+
+.settle-confirm-box > div {
+  display: grid;
+  gap: 3px;
+}
+
+.settle-confirm-box .ghost-action {
+  grid-column: 1 / -1;
+  min-height: 38px;
+}
+
 .history-sheet .history-list {
   display: grid;
   gap: 9px;
@@ -1659,6 +1695,34 @@ textarea:focus {
   gap: 4px;
   color: var(--muted);
   font-size: 13px;
+}
+
+.undo-link {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 900;
+  padding: 2px;
+  text-decoration: underline;
+}
+
+.undo-link.confirming {
+  color: #a3372a;
+}
+
+.undo-link:disabled {
+  cursor: progress;
+  opacity: 0.65;
+}
+
+.history-tag {
+  border-radius: 999px;
+  background: var(--soft);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+  padding: 3px 8px;
 }
 
 .next-turn-line {
