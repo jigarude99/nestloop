@@ -8,13 +8,14 @@ import {
   Check,
   CheckCircle2,
   ChevronRight,
-  CircleDollarSign,
   Clock3,
   CreditCard,
   Database,
   Droplets,
   HandCoins,
+  Handshake,
   HelpCircle,
+  History,
   Home,
   KeyRound,
   LifeBuoy,
@@ -26,6 +27,7 @@ import {
   ReceiptText,
   RotateCcw,
   RotateCw,
+  Scale,
   ShieldCheck,
   Sparkles,
   Trash2,
@@ -61,11 +63,13 @@ import {
   fetchExpenses,
   fetchNotifications,
   fetchRotations,
+  fetchSettlements,
   fetchSlots,
   markSharePaid,
   payExpenseForEveryone as apiPayExpenseForEveryone,
   registerPushNotifications,
   setShareStatus,
+  settleWith as apiSettleWith,
   signedUrl,
   triggerPushDispatch,
   undoRotation as apiUndoRotation,
@@ -82,7 +86,8 @@ import {
   type PushRegistrationResult,
   type Rotation,
   type RotationIcon,
-  type ScheduleSlot
+  type ScheduleSlot,
+  type Settlement
 } from "../lib/api";
 
 type View = "home" | "expenses" | "tasks" | "calendar" | "people";
@@ -195,6 +200,34 @@ function methodLabel(method?: PaymentMethod) {
   if (method === "cash") return "Efectivo";
   if (method === "other") return "Otro";
   return undefined;
+}
+
+type PairItem = { expenseId: string; title: string; amount: number };
+type Pairwise = {
+  iOweItems: PairItem[];
+  theyOweItems: PairItem[];
+  iOwe: number;
+  theyOwe: number;
+  net: number; // >0 yo le debo a la otra persona; <0 me debe; 0 a mano
+};
+
+/** Cuentas abiertas entre el usuario actual (meId) y otra persona (otherId). */
+function pairwiseBalance(expenses: Expense[], meId: string, otherId: string): Pairwise {
+  const iOweItems: PairItem[] = [];
+  const theyOweItems: PairItem[] = [];
+  for (const expense of expenses) {
+    if (expense.paidBy === otherId) {
+      const mine = expense.shares.find((s) => s.personId === meId && s.status !== "confirmed");
+      if (mine && mine.amount > 0) iOweItems.push({ expenseId: expense.id, title: expense.title, amount: mine.amount });
+    } else if (expense.paidBy === meId) {
+      const theirs = expense.shares.find((s) => s.personId === otherId && s.status !== "confirmed");
+      if (theirs && theirs.amount > 0)
+        theyOweItems.push({ expenseId: expense.id, title: expense.title, amount: theirs.amount });
+    }
+  }
+  const iOwe = iOweItems.reduce((sum, i) => sum + i.amount, 0);
+  const theyOwe = theyOweItems.reduce((sum, i) => sum + i.amount, 0);
+  return { iOweItems, theyOweItems, iOwe, theyOwe, net: iOwe - theyOwe };
 }
 
 /** Mantener apretado (o clic derecho) para abrir el menú de acciones. */
@@ -489,6 +522,7 @@ function ProfileSheet({
   notificationPermission,
   onEnableNotifications,
   onHelp,
+  onHistory,
   onSignOut,
   onClose
 }: {
@@ -497,6 +531,7 @@ function ProfileSheet({
   notificationPermission: NotificationPermission | PushRegistrationResult;
   onEnableNotifications: () => Promise<PushRegistrationResult>;
   onHelp: () => void;
+  onHistory: () => void;
   onSignOut: () => void;
   onClose: () => void;
 }) {
@@ -574,6 +609,11 @@ function ProfileSheet({
         <button className="secondary-action full" onClick={onHelp} type="button">
           <HelpCircle size={18} />
           ¿Cómo se usa NestLoop?
+        </button>
+
+        <button className="secondary-action full" onClick={onHistory} type="button">
+          <History size={18} />
+          Historial de la casa
         </button>
 
         <button className="danger-action full" onClick={onSignOut} type="button">
@@ -1954,38 +1994,196 @@ function CalendarView({
   );
 }
 
+function BalanceSheet({
+  person,
+  expenses,
+  onClose,
+  onSettle
+}: {
+  person: Person;
+  expenses: Expense[];
+  onClose: () => void;
+  onSettle: (otherId: string, method: PaymentMethod, proofFile: File | null) => Promise<void>;
+}) {
+  const { currentUserId, getPerson } = useApp();
+  const me = getPerson(currentUserId);
+  const pair = useMemo(
+    () => pairwiseBalance(expenses, currentUserId, person.id),
+    [expenses, currentUserId, person.id]
+  );
+  const [method, setMethod] = useState<PaymentMethod>("transfer");
+  const [proofFile, setProofFile] = useState<File | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const hasOpen = pair.iOweItems.length > 0 || pair.theyOweItems.length > 0;
+  const net = pair.net;
+  const iAmNetDebtor = net > 0;
+  const settled = !hasOpen;
+  async function settle() {
+    setBusy(true);
+    setError(null);
+    try {
+      await onSettle(person.id, method, proofFile);
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudo saldar. Intenta de nuevo.");
+      setBusy(false);
+    }
+  }
+
+  return (
+    <ModalBackdrop onClose={onClose}>
+      <div className="modal-sheet balance-sheet">
+        <div className="modal-header">
+          <div>
+            <p className="eyebrow">Cuentas con</p>
+            <h2>{person.name}</h2>
+          </div>
+          <button className="icon-button" onClick={onClose} type="button" aria-label="Cerrar">
+            <X size={20} />
+          </button>
+        </div>
+
+        {settled ? (
+          <div className="balance-net even">
+            <Scale size={26} />
+            <strong>Están a mano</strong>
+            <span>No tienes cuentas abiertas con {person.shortName}.</span>
+          </div>
+        ) : (
+          <>
+            <div className={`balance-net ${net > 0 ? "owe" : net < 0 ? "get" : "even"}`}>
+              <span className="balance-net-label">
+                {net > 0
+                  ? `En neto, le debes a ${person.shortName}`
+                  : net < 0
+                    ? `En neto, ${person.shortName} te debe`
+                    : "Quedan a mano"}
+              </span>
+              <strong>{money(Math.abs(net))}</strong>
+              {pair.iOwe > 0 && pair.theyOwe > 0 ? (
+                <small>
+                  {money(pair.iOwe)} que le debes − {money(pair.theyOwe)} que te debe se compensan.
+                </small>
+              ) : null}
+            </div>
+
+            {pair.iOweItems.length ? (
+              <section className="balance-block">
+                <div className="balance-block-head">
+                  <strong>Tú le debes</strong>
+                  <span>{money(pair.iOwe)}</span>
+                </div>
+                {pair.iOweItems.map((item) => (
+                  <div className="balance-line" key={`owe-${item.expenseId}`}>
+                    <span>{item.title}</span>
+                    <strong>{money(item.amount)}</strong>
+                  </div>
+                ))}
+              </section>
+            ) : null}
+
+            {pair.theyOweItems.length ? (
+              <section className="balance-block">
+                <div className="balance-block-head">
+                  <strong>{person.shortName} te debe</strong>
+                  <span className="mint">{money(pair.theyOwe)}</span>
+                </div>
+                {pair.theyOweItems.map((item) => (
+                  <div className="balance-line" key={`get-${item.expenseId}`}>
+                    <span>{item.title}</span>
+                    <strong>{money(item.amount)}</strong>
+                  </div>
+                ))}
+              </section>
+            ) : null}
+
+            <div className="payment-box">
+              <div className="settle-explain">
+                <Handshake size={19} />
+                <span>
+                  {net > 0
+                    ? `Págale ${money(net)} a ${person.shortName} y quedan a mano.`
+                    : net < 0
+                      ? `Cuando ${person.shortName} te pague ${money(Math.abs(net))} quedan a mano.`
+                      : "Marca todo como saldado: ya están a mano."}
+                </span>
+              </div>
+              {iAmNetDebtor ? (
+                <>
+                  <div className="split-toolbar">
+                    <span>Cómo pagaste</span>
+                    <div className="segmented">
+                      <button className={method === "transfer" ? "active" : ""} onClick={() => setMethod("transfer")} type="button">
+                        Transferencia
+                      </button>
+                      <button className={method === "cash" ? "active" : ""} onClick={() => setMethod("cash")} type="button">
+                        Efectivo
+                      </button>
+                    </div>
+                  </div>
+                  {method !== "cash" ? (
+                    <label className="file-pick">
+                      <Upload size={18} />
+                      <span>{proofFile?.name || "Subir comprobante (opcional)"}</span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={(event) => setProofFile(event.target.files?.[0] ?? null)}
+                      />
+                    </label>
+                  ) : null}
+                </>
+              ) : null}
+              {error ? <div className="auth-alert error">{error}</div> : null}
+              <button className="primary-action full" disabled={busy} onClick={settle} type="button">
+                <Handshake size={19} />
+                {busy
+                  ? "Saldando…"
+                  : net > 0
+                    ? `Saldar: le pagué ${money(net)}`
+                    : net < 0
+                      ? `Saldar: ${person.shortName} me pagó ${money(Math.abs(net))}`
+                      : "Marcar como saldado"}
+              </button>
+            </div>
+          </>
+        )}
+        <p className="form-hint" style={{ textAlign: "center" }}>
+          Al saldar, todas las cuentas abiertas entre {me.shortName} y {person.shortName} quedan
+          confirmadas y se guardan en el historial.
+        </p>
+      </div>
+    </ModalBackdrop>
+  );
+}
+
 function PeopleView({
   expenses,
   rotations,
-  household
+  household,
+  onOpenBalance
 }: {
   expenses: Expense[];
   rotations: Rotation[];
   household: Household;
+  onOpenBalance: (person: Person) => void;
 }) {
-  const { people } = useApp();
+  const { people, currentUserId } = useApp();
   const [copied, setCopied] = useState(false);
+  const others = people.filter((p) => p.id !== currentUserId);
 
-  function personBalance(personId: string) {
-    const owes = expenses
-      .flatMap((expense) =>
-        expense.shares
-          .filter(
-            (share) =>
-              share.personId === personId && expense.paidBy !== personId && share.status !== "confirmed"
-          )
-          .map((share) => share.amount)
-      )
-      .reduce((sum, value) => sum + value, 0);
-
-    const incoming = expenses
-      .filter((expense) => expense.paidBy === personId)
-      .flatMap((expense) => expense.shares)
-      .filter((share) => share.personId !== personId && share.status !== "confirmed")
-      .reduce((sum, share) => sum + share.amount, 0);
-
-    return incoming - owes;
-  }
+  const myTotals = useMemo(() => {
+    let owe = 0;
+    let get = 0;
+    for (const other of others) {
+      const pair = pairwiseBalance(expenses, currentUserId, other.id);
+      owe += pair.iOwe;
+      get += pair.theyOwe;
+    }
+    return { owe, get };
+  }, [expenses, others, currentUserId]);
 
   async function copyCode() {
     if (!household.invite_code) return;
@@ -2002,35 +2200,80 @@ function PeopleView({
     <section className="view-stack">
       <div className="section-heading">
         <div>
-          <p className="eyebrow">La casa</p>
-          <h1>Cada quien tiene un lugar claro.</h1>
+          <p className="eyebrow">Saldos</p>
+          <h1>Cuentas claras entre todos.</h1>
         </div>
       </div>
 
-      <div className="people-grid">
+      <div className="balance-summary">
+        <div className="balance-summary-cell">
+          <span>Debes en total</span>
+          <strong className="coral-text">{money(myTotals.owe)}</strong>
+        </div>
+        <div className="balance-summary-divider" />
+        <div className="balance-summary-cell">
+          <span>Te deben</span>
+          <strong className="mint-text">{money(myTotals.get)}</strong>
+        </div>
+      </div>
+
+      <div className="section-heading compact">
+        <div>
+          <p className="eyebrow">Tus cuentas</p>
+          <h2>Con cada persona</h2>
+        </div>
+      </div>
+
+      {others.length ? (
+        <div className="settle-list">
+          {others.map((person) => {
+            const pair = pairwiseBalance(expenses, currentUserId, person.id);
+            const tone = pair.net > 0 ? "owe" : pair.net < 0 ? "get" : "even";
+            const label =
+              pair.net > 0 ? "Le debes" : pair.net < 0 ? "Te debe" : "A mano";
+            return (
+              <button className="settle-row" key={person.id} onClick={() => onOpenBalance(person)} type="button">
+                <Avatar person={person} size="md" />
+                <span className="settle-row-main">
+                  <strong>{person.name}</strong>
+                  <small>{pair.net === 0 ? "Sin cuentas abiertas" : `${label} en neto`}</small>
+                </span>
+                <span className={`settle-amount ${tone}`}>
+                  {pair.net === 0 ? "A mano" : money(Math.abs(pair.net))}
+                </span>
+                <ChevronRight size={19} />
+              </button>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="empty-state">
+          <Users size={28} />
+          <strong>Aún están solos en la casa</strong>
+          <span>Invita a tu familia con el código de abajo.</span>
+        </div>
+      )}
+
+      <div className="section-heading compact">
+        <div>
+          <p className="eyebrow">La casa</p>
+          <h2>Quién es quién</h2>
+        </div>
+      </div>
+      <div className="member-chips">
         {people.map((person) => {
-          const balance = personBalance(person.id);
           const nextTurn = rotations.find((rotation) => rotation.queue[rotation.currentIndex] === person.id);
           return (
-            <article className="person-card" key={person.id}>
-              <div className="person-card-top">
-                <Avatar person={person} size="lg" />
-                <div>
-                  <strong>{person.name}</strong>
-                  <span>{person.role === "admin" ? "Administrador" : "Miembro"}</span>
-                </div>
-              </div>
-              <div className={`balance-pill ${balance >= 0 ? "positive" : "negative"}`}>
-                <CircleDollarSign size={18} />
-                <span>
-                  {balance >= 0 ? "Recibe" : "Debe"} {money(Math.abs(balance))}
-                </span>
-              </div>
-              <div className="next-turn-line">
-                <RotateCw size={17} />
-                <span>{nextTurn ? nextTurn.title : "Sin turno ahora"}</span>
-              </div>
-            </article>
+            <div className="member-chip" key={person.id}>
+              <Avatar person={person} size="sm" />
+              <span>
+                <strong>{person.name}{person.id === currentUserId ? " (tú)" : ""}</strong>
+                <small>
+                  {person.role === "admin" ? "Administrador" : "Miembro"}
+                  {nextTurn ? ` · ${nextTurn.title}` : ""}
+                </small>
+              </span>
+            </div>
           );
         })}
       </div>
@@ -2127,6 +2370,174 @@ function HelpSheet({ household, onClose }: { household: Household; onClose: () =
   );
 }
 
+type HistoryEvent = {
+  id: string;
+  at: string;
+  icon: LucideIcon;
+  tone: string;
+  title: string;
+  detail: string;
+  amount?: number;
+  bucket?: "receipts" | "payment-proofs";
+  path?: string;
+};
+
+function buildHistory(expenses: Expense[], settlements: Settlement[], getPerson: (id: string) => Person): HistoryEvent[] {
+  const events: HistoryEvent[] = [];
+
+  for (const expense of expenses) {
+    events.push({
+      id: `exp-${expense.id}`,
+      at: expense.createdAt,
+      icon: ReceiptText,
+      tone: "coral",
+      title: `${getPerson(expense.createdBy).shortName} agregó "${expense.title}"`,
+      detail: `${expense.merchant || "Sin tienda"} · dividido entre ${expense.shares.length}`,
+      amount: expense.amount,
+      bucket: expense.receiptPath ? "receipts" : undefined,
+      path: expense.receiptPath
+    });
+    for (const share of expense.shares) {
+      if (share.personId === expense.paidBy) continue;
+      if (share.status === "confirmed" && share.confirmedAt) {
+        events.push({
+          id: `pay-${expense.id}-${share.personId}`,
+          at: share.confirmedAt,
+          icon: BadgeCheck,
+          tone: "mint",
+          title: `${getPerson(share.personId).shortName} pagó a ${getPerson(expense.paidBy).shortName}`,
+          detail: `"${expense.title}" · ${methodLabel(share.paymentMethod) ?? "saldado"}`,
+          amount: share.amount,
+          bucket: share.proofPath ? "payment-proofs" : undefined,
+          path: share.proofPath
+        });
+      }
+    }
+  }
+
+  for (const s of settlements) {
+    events.push({
+      id: `set-${s.id}`,
+      at: s.createdAt,
+      icon: Handshake,
+      tone: "sky",
+      title: `${getPerson(s.fromProfile).shortName} saldó con ${getPerson(s.toProfile).shortName}`,
+      detail:
+        s.grossOwed > 0 && s.grossOwing > 0
+          ? `Se compensaron las cuentas · ${s.sharesCleared} cerradas`
+          : `${s.sharesCleared} ${s.sharesCleared === 1 ? "cuenta cerrada" : "cuentas cerradas"}`,
+      amount: s.netAmount,
+      bucket: s.proofPath ? "payment-proofs" : undefined,
+      path: s.proofPath
+    });
+  }
+
+  return events.sort((a, b) => (a.at < b.at ? 1 : -1));
+}
+
+function HistorySheet({ householdId, onClose }: { householdId: string; onClose: () => void }) {
+  const { getPerson } = useApp();
+  const [events, setEvents] = useState<HistoryEvent[] | null>(null);
+  const [error, setError] = useState(false);
+  const [viewing, setViewing] = useState<{ bucket: "receipts" | "payment-proofs"; path: string; title: string } | null>(null);
+
+  useEffect(() => {
+    let on = true;
+    Promise.all([fetchExpenses(householdId, true), fetchSettlements(householdId)])
+      .then(([expenses, settlements]) => {
+        if (on) setEvents(buildHistory(expenses, settlements, getPerson));
+      })
+      .catch(() => {
+        if (on) setError(true);
+      });
+    return () => {
+      on = false;
+    };
+  }, [householdId, getPerson]);
+
+  return (
+    <ModalBackdrop onClose={onClose}>
+      <div className="modal-sheet history-sheet">
+        <div className="modal-header">
+          <div>
+            <p className="eyebrow">Movimientos</p>
+            <h2>Historial de la casa</h2>
+          </div>
+          <button className="icon-button" onClick={onClose} type="button" aria-label="Cerrar">
+            <X size={20} />
+          </button>
+        </div>
+
+        {!events && !error ? (
+          <div className="empty-state">
+            <span className="loading-mark small">
+              <RotateCw size={22} />
+            </span>
+            <strong>Cargando…</strong>
+          </div>
+        ) : error ? (
+          <div className="empty-state">
+            <Database size={28} />
+            <strong>No se pudo cargar</strong>
+          </div>
+        ) : events && events.length ? (
+          <div className="history-list">
+            {events.map((event) => {
+              const Icon = event.icon;
+              const clickable = !!(event.bucket && event.path);
+              return (
+                <div
+                  className={`history-row ${clickable ? "clickable" : ""}`}
+                  key={event.id}
+                  onClick={
+                    clickable
+                      ? () => setViewing({ bucket: event.bucket!, path: event.path!, title: event.title })
+                      : undefined
+                  }
+                >
+                  <IconBubble icon={Icon} tone={event.tone} />
+                  <span className="history-main">
+                    <strong>{event.title}</strong>
+                    <small>{event.detail}</small>
+                    <em>{relativeDate(event.at)}</em>
+                  </span>
+                  <span className="history-side">
+                    {event.amount !== undefined ? <strong>{money(event.amount)}</strong> : null}
+                    {clickable ? <Camera size={15} /> : null}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="empty-state">
+            <History size={28} />
+            <strong>Todavía no hay movimientos</strong>
+            <span>Aquí aparecerá cada gasto, pago y cuenta saldada.</span>
+          </div>
+        )}
+      </div>
+
+      {viewing ? (
+        <ModalBackdrop onClose={() => setViewing(null)}>
+          <div className="modal-sheet photo-sheet">
+            <div className="modal-header">
+              <div>
+                <p className="eyebrow">Comprobante</p>
+                <h2>{viewing.title}</h2>
+              </div>
+              <button className="icon-button" onClick={() => setViewing(null)} type="button" aria-label="Cerrar">
+                <X size={20} />
+              </button>
+            </div>
+            <SignedImage bucket={viewing.bucket} path={viewing.path} alt="Comprobante" />
+          </div>
+        </ModalBackdrop>
+      ) : null}
+    </ModalBackdrop>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Componente raíz
 // ---------------------------------------------------------------------------
@@ -2149,7 +2560,9 @@ export function NestLoopApp({
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
   const [showHelp, setShowHelp] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
+  const [balancePerson, setBalancePerson] = useState<Person | null>(null);
   const [notifications, setNotifications] = useState<NotificationDelivery[]>([]);
   const [seenNotificationIds, setSeenNotificationIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
@@ -2376,6 +2789,12 @@ export function NestLoopApp({
     await reloadNotifications().catch(() => {});
   }
 
+  async function handleSettleWith(otherId: string, method: PaymentMethod, proofFile: File | null) {
+    await apiSettleWith(hid, otherId, method, proofFile);
+    await reloadExpenses();
+    await reloadNotifications().catch(() => {});
+  }
+
   return (
     <AppDataContext.Provider value={appData}>
       <main className="app-shell">
@@ -2446,7 +2865,12 @@ export function NestLoopApp({
               ) : null}
 
               {activeView === "people" ? (
-                <PeopleView expenses={expenses} household={household} rotations={rotations} />
+                <PeopleView
+                  expenses={expenses}
+                  household={household}
+                  onOpenBalance={setBalancePerson}
+                  rotations={rotations}
+                />
               ) : null}
             </>
           )}
@@ -2489,6 +2913,10 @@ export function NestLoopApp({
               setShowProfile(false);
               setShowHelp(true);
             }}
+            onHistory={() => {
+              setShowProfile(false);
+              setShowHistory(true);
+            }}
             onSignOut={onSignOut}
             onClose={() => setShowProfile(false)}
           />
@@ -2502,6 +2930,15 @@ export function NestLoopApp({
             unreadIds={unreadNotificationIds}
           />
         ) : null}
+        {balancePerson ? (
+          <BalanceSheet
+            expenses={expenses}
+            onClose={() => setBalancePerson(null)}
+            onSettle={handleSettleWith}
+            person={balancePerson}
+          />
+        ) : null}
+        {showHistory ? <HistorySheet householdId={hid} onClose={() => setShowHistory(false)} /> : null}
       </main>
     </AppDataContext.Provider>
   );

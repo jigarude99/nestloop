@@ -76,6 +76,20 @@ export type NotificationDelivery = {
   lastSentAt?: string;
 };
 
+export type Settlement = {
+  id: string;
+  fromProfile: string;
+  toProfile: string;
+  netAmount: number;
+  grossOwed: number;
+  grossOwing: number;
+  sharesCleared: number;
+  method?: PaymentMethod;
+  proofPath?: string;
+  createdBy: string;
+  createdAt: string;
+};
+
 export type NewExpenseInput = {
   title: string;
   merchant: string;
@@ -233,17 +247,20 @@ export async function fetchNotifications(householdId: string): Promise<Notificat
 // ---------------------------------------------------------------------------
 // GASTOS
 // ---------------------------------------------------------------------------
-export async function fetchExpenses(householdId: string): Promise<Expense[]> {
+export async function fetchExpenses(
+  householdId: string,
+  includeArchived = false
+): Promise<Expense[]> {
   const supabase = getSupabase();
-  const { data, error } = await supabase
+  let query = supabase
     .from("expenses")
     .select(
       "id,title,merchant,category,amount_cents,paid_by,created_by,purchased_at,note,receipt_path,created_at,hidden_from_non_participants,archived_at,reimburses_expense_id," +
         "shares:expense_shares(profile_id,amount_cents,status,payment_method,proof_path,sent_at,confirmed_at)"
     )
-    .eq("household_id", householdId)
-    .is("archived_at", null)
-    .order("created_at", { ascending: false });
+    .eq("household_id", householdId);
+  if (!includeArchived) query = query.is("archived_at", null);
+  const { data, error } = await query.order("created_at", { ascending: false });
 
   if (error) throw error;
 
@@ -639,6 +656,68 @@ export async function deleteSlot(slotId: string): Promise<void> {
   const supabase = getSupabase();
   const { error } = await supabase.from("schedule_slots").delete().eq("id", slotId).select("id").single();
   if (error) throw error;
+}
+
+// ---------------------------------------------------------------------------
+// SALDOS / COMPENSACIÓN (netting)
+// ---------------------------------------------------------------------------
+export async function fetchSettlements(householdId: string): Promise<Settlement[]> {
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from("settlements")
+    .select(
+      "id,from_profile,to_profile,net_cents,gross_owed_cents,gross_owing_cents,shares_cleared,method,proof_path,created_by,created_at"
+    )
+    .eq("household_id", householdId)
+    .order("created_at", { ascending: false })
+    .limit(100);
+  if (error) throw error;
+  return (data ?? []).map((row: any) => ({
+    id: row.id,
+    fromProfile: row.from_profile,
+    toProfile: row.to_profile,
+    netAmount: fromCents(row.net_cents),
+    grossOwed: fromCents(row.gross_owed_cents),
+    grossOwing: fromCents(row.gross_owing_cents),
+    sharesCleared: row.shares_cleared ?? 0,
+    method: row.method ?? undefined,
+    proofPath: row.proof_path ?? undefined,
+    createdBy: row.created_by,
+    createdAt: row.created_at
+  }));
+}
+
+/** Compensa todas las cuentas abiertas entre el usuario actual y otra persona. */
+export async function settleWith(
+  householdId: string,
+  otherId: string,
+  method: PaymentMethod,
+  proofFile: File | null
+): Promise<{ netAmount: number; cleared: number }> {
+  const supabase = getSupabase();
+
+  let proofPath: string | null = null;
+  if (method !== "cash" && proofFile) {
+    const path = `${householdId}/settlements/${otherId}-${Date.now()}-${safeName(proofFile.name)}`;
+    const { error: upErr } = await supabase.storage.from(PROOFS).upload(path, proofFile, { upsert: false });
+    if (upErr) throw upErr;
+    proofPath = path;
+  }
+
+  const { data, error } = await supabase.rpc("settle_with", {
+    p_other_id: otherId,
+    p_method: method,
+    p_proof_path: proofPath
+  });
+  if (error) throw new Error(settleErrorMessage(error.message));
+  const result = (data ?? {}) as { net_cents?: number; cleared?: number };
+  return { netAmount: fromCents(result.net_cents ?? 0), cleared: result.cleared ?? 0 };
+}
+
+function settleErrorMessage(message: string): string {
+  if (message.includes("No hay cuentas")) return "No hay cuentas que saldar con esta persona.";
+  if (message.includes("No comparten")) return "Esta persona no está en tu casa.";
+  return "No se pudo saldar la cuenta. Intenta de nuevo.";
 }
 
 // ---------------------------------------------------------------------------
