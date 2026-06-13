@@ -1,4 +1,4 @@
-const CACHE_NAME = "nestloop-v10";
+const CACHE_NAME = "nestloop-v11";
 const APP_SHELL = [
   "/",
   "/manifest.json",
