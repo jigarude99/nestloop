@@ -662,6 +662,36 @@ export async function deleteSlot(slotId: string): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// MODO TABLERO (kiosk) — solo lectura, acceso por código de casa, sin cuenta
+// ---------------------------------------------------------------------------
+export type BoardMember = { id: string; name: string; color: string };
+export type BoardRotation = {
+  title: string;
+  cadence: string;
+  icon: RotationIcon;
+  current: string | null;
+  currentColor: string | null;
+};
+export type BoardSlot = { day: number; name: string; color: string; start: string; end: string; label: string };
+export type BoardDebt = { from: string; fromColor: string; to: string; toColor: string; amount: number };
+export type HouseholdBoard = {
+  ok: boolean;
+  household?: string;
+  members?: BoardMember[];
+  rotations?: BoardRotation[];
+  slots?: BoardSlot[];
+  debts?: BoardDebt[];
+};
+
+/** Resumen de solo lectura de toda la casa, accesible solo con el código. */
+export async function fetchBoard(code: string): Promise<HouseholdBoard> {
+  const supabase = getSupabase();
+  const { data, error } = await supabase.rpc("get_household_board", { p_invite_code: code.trim() });
+  if (error) throw error;
+  return (data ?? { ok: false }) as HouseholdBoard;
+}
+
+// ---------------------------------------------------------------------------
 // SALDOS / COMPENSACIÓN (netting)
 // ---------------------------------------------------------------------------
 export async function fetchSettlements(householdId: string): Promise<Settlement[]> {
