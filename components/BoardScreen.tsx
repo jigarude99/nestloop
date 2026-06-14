@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  ArrowLeft,
   ArrowRight,
   CalendarDays,
   Droplets,
@@ -48,9 +49,11 @@ function Chip({ name, color }: { name: string; color: string }) {
 
 function CodeEntry({
   onSubmit,
+  onExit,
   invalid
 }: {
   onSubmit: (code: string) => void;
+  onExit: () => void;
   invalid: boolean;
 }) {
   const [value, setValue] = useState("");
@@ -96,12 +99,16 @@ function CodeEntry({
         <p className="auth-sub" style={{ margin: "16px 0 0" }}>
           El código es el mismo que usas para invitar a tu familia (lo ves en “Personas” dentro de la app).
         </p>
+        <button className="auth-signout" type="button" onClick={onExit}>
+          <ArrowLeft size={16} />
+          Volver al inicio de sesión
+        </button>
       </div>
     </div>
   );
 }
 
-export function BoardScreen() {
+export function BoardScreen({ onExit }: { onExit: () => void }) {
   const [code, setCode] = useState<string | null>(null);
   const [board, setBoard] = useState<HouseholdBoard | null>(null);
   const [status, setStatus] = useState<"entry" | "loading" | "ready" | "invalid" | "offline">("entry");
@@ -198,7 +205,7 @@ export function BoardScreen() {
   );
 
   if (status === "entry" || status === "invalid") {
-    return <CodeEntry onSubmit={submitCode} invalid={status === "invalid"} />;
+    return <CodeEntry onSubmit={submitCode} onExit={onExit} invalid={status === "invalid"} />;
   }
 
   if (!board) {

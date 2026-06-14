@@ -1,11 +1,15 @@
 "use client";
 
+import { useState } from "react";
 import { RotateCw, WifiOff } from "lucide-react";
 import { hasSupabaseConfig } from "../lib/supabase";
 import { AuthProvider, useAuth } from "./AuthProvider";
 import { AuthScreen } from "./AuthScreen";
+import { BoardScreen } from "./BoardScreen";
 import { HouseholdSetup } from "./HouseholdSetup";
 import { NestLoopApp } from "./NestLoopApp";
+
+const BOARD_MODE_KEY = "nestloop:mode";
 
 function LoadingScreen() {
   return (
@@ -49,12 +53,12 @@ function NotConfigured() {
   );
 }
 
-function Gate() {
+function Gate({ onBoardMode }: { onBoardMode: () => void }) {
   const { status, people, currentUserId, household, signOut, refresh } = useAuth();
 
   if (status === "loading") return <LoadingScreen />;
   if (status === "error") return <ErrorScreen onRetry={refresh} />;
-  if (status === "signed-out") return <AuthScreen />;
+  if (status === "signed-out") return <AuthScreen onBoardMode={onBoardMode} />;
   if (status === "no-household") return <HouseholdSetup />;
 
   // status === "ready"
@@ -69,10 +73,39 @@ function Gate() {
 }
 
 export function AuthGate() {
+  const [board, setBoard] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      return window.localStorage.getItem(BOARD_MODE_KEY) === "board";
+    } catch {
+      return false;
+    }
+  });
+
+  function enterBoard() {
+    try {
+      window.localStorage.setItem(BOARD_MODE_KEY, "board");
+    } catch {
+      /* ignore */
+    }
+    setBoard(true);
+  }
+
+  function exitBoard() {
+    try {
+      window.localStorage.removeItem(BOARD_MODE_KEY);
+    } catch {
+      /* ignore */
+    }
+    setBoard(false);
+  }
+
   if (!hasSupabaseConfig) return <NotConfigured />;
+  // El tablero no necesita cuenta: vive fuera del AuthProvider.
+  if (board) return <BoardScreen onExit={exitBoard} />;
   return (
     <AuthProvider>
-      <Gate />
+      <Gate onBoardMode={enterBoard} />
     </AuthProvider>
   );
 }

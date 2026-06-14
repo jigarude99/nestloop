@@ -1,13 +1,13 @@
 "use client";
 
 import { FormEvent, useState } from "react";
-import { LogIn, Mail, UserPlus } from "lucide-react";
+import { LogIn, Mail, Tv, UserPlus } from "lucide-react";
 import { useAuth } from "./AuthProvider";
 import { BrandGlyph } from "./BrandGlyph";
 
 type Mode = "signin" | "signup";
 
-export function AuthScreen() {
+export function AuthScreen({ onBoardMode }: { onBoardMode: () => void }) {
   const { signIn, signUp } = useAuth();
   const [mode, setMode] = useState<Mode>("signin");
   const [fullName, setFullName] = useState("");
@@ -131,6 +131,11 @@ export function AuthScreen() {
             </>
           )}
         </div>
+
+        <button className="board-mode-link" type="button" onClick={onBoardMode}>
+          <Tv size={16} />
+          Modo tablero · pantalla para la cocina
+        </button>
       </div>
     </div>
   );

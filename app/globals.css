@@ -2104,6 +2104,27 @@ textarea:focus {
   font-size: 13.5px;
 }
 
+.board-mode-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  justify-content: center;
+  margin-top: 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--muted);
+  font-weight: 800;
+  font-size: 13.5px;
+  min-height: 46px;
+}
+
+.board-mode-link:hover {
+  border-color: var(--ink);
+  color: var(--ink);
+}
+
 .setup-toggle {
   display: grid;
   grid-template-columns: 1fr 1fr;
