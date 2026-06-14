@@ -935,6 +935,69 @@ textarea:focus {
   pointer-events: none;
 }
 
+/* Selector de foto: Cámara o Galería */
+.photo-picker {
+  display: grid;
+  gap: 9px;
+  border: 1px dashed color-mix(in srgb, var(--mint) 55%, var(--line));
+  border-radius: var(--radius);
+  background: var(--mint-soft);
+  padding: 11px 12px;
+}
+
+.photo-picker-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 22px;
+  color: #075f49;
+  font-weight: 800;
+  font-size: 13.5px;
+}
+
+.photo-picker-head > span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.photo-clear {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  border: 1px solid color-mix(in srgb, var(--mint) 40%, var(--line));
+  border-radius: 999px;
+  background: var(--surface);
+  color: #075f49;
+}
+
+.photo-picker-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.photo-picker-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 46px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  font-weight: 850;
+}
+
+.photo-picker-actions button:hover {
+  border-color: var(--ink);
+}
+
 .split-toolbar {
   display: flex;
   align-items: center;

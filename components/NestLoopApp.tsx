@@ -17,6 +17,7 @@ import {
   HelpCircle,
   History,
   Home,
+  Image as ImageIcon,
   KeyRound,
   LifeBuoy,
   LogOut,
@@ -365,6 +366,61 @@ function SignedImage({
   }, [bucket, path]);
   if (!url) return null;
   return <img className="receipt-img" src={url} alt={alt} />;
+}
+
+/** Selector de foto con dos opciones claras: tomar con la cámara o elegir de galería. */
+function PhotoPicker({
+  file,
+  onPick,
+  label,
+  icon: Icon = Camera
+}: {
+  file: File | null;
+  onPick: (file: File | null) => void;
+  label: string;
+  icon?: LucideIcon;
+}) {
+  const cameraRef = useRef<HTMLInputElement>(null);
+  const galleryRef = useRef<HTMLInputElement>(null);
+
+  return (
+    <div className="photo-picker">
+      <input
+        ref={cameraRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        hidden
+        onChange={(event) => onPick(event.target.files?.[0] ?? null)}
+      />
+      <input
+        ref={galleryRef}
+        type="file"
+        accept="image/*"
+        hidden
+        onChange={(event) => onPick(event.target.files?.[0] ?? null)}
+      />
+      <div className="photo-picker-head">
+        <Icon size={18} />
+        <span>{file ? file.name : label}</span>
+        {file ? (
+          <button className="photo-clear" type="button" onClick={() => onPick(null)} aria-label="Quitar foto">
+            <X size={16} />
+          </button>
+        ) : null}
+      </div>
+      <div className="photo-picker-actions">
+        <button type="button" onClick={() => cameraRef.current?.click()}>
+          <Camera size={17} />
+          Cámara
+        </button>
+        <button type="button" onClick={() => galleryRef.current?.click()}>
+          <ImageIcon size={17} />
+          Galería
+        </button>
+      </div>
+    </div>
+  );
 }
 
 /** Hoja de acciones (Editar / Eliminar) con confirmación de borrado. */
@@ -1090,15 +1146,11 @@ function ExpenseForm({
           </label>
         </div>
 
-        <label className="file-pick">
-          <Camera size={19} />
-          <span>{receiptFile?.name || (isEdit && initial?.receiptPath ? "Cambiar foto de la factura" : "Adjuntar foto de la factura")}</span>
-          <input
-            type="file"
-            accept="image/*"
-            onChange={(event) => setReceiptFile(event.target.files?.[0] ?? null)}
-          />
-        </label>
+        <PhotoPicker
+          file={receiptFile}
+          onPick={setReceiptFile}
+          label={isEdit && initial?.receiptPath ? "Cambiar foto de la factura" : "Adjuntar foto de la factura"}
+        />
 
         <label>
           <span>Nota</span>
@@ -1351,15 +1403,7 @@ function ExpenseDetail({
               </div>
             </div>
             {method !== "cash" ? (
-              <label className="file-pick">
-                <Upload size={18} />
-                <span>{proofFile?.name || "Subir captura del pago"}</span>
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={(event) => setProofFile(event.target.files?.[0] ?? null)}
-                />
-              </label>
+              <PhotoPicker file={proofFile} onPick={setProofFile} label="Subir captura del pago" icon={Upload} />
             ) : (
               <div className="cash-note">
                 <HandCoins size={19} />
@@ -1402,15 +1446,7 @@ function ExpenseDetail({
               </div>
             </div>
             {bulkMethod !== "cash" ? (
-              <label className="file-pick">
-                <Upload size={18} />
-                <span>{bulkProofFile?.name || "Subir comprobante del pago completo"}</span>
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={(event) => setBulkProofFile(event.target.files?.[0] ?? null)}
-                />
-              </label>
+              <PhotoPicker file={bulkProofFile} onPick={setBulkProofFile} label="Subir comprobante del pago completo" icon={Upload} />
             ) : (
               <div className="cash-note">
                 <HandCoins size={19} />
@@ -2152,18 +2188,15 @@ function BalanceSheet({
                     </div>
                   </div>
                   {method !== "cash" ? (
-                    <label className="file-pick">
-                      <Upload size={18} />
-                      <span>{proofFile?.name || "Subir comprobante (obligatorio)"}</span>
-                      <input
-                        type="file"
-                        accept="image/*"
-                        onChange={(event) => {
-                          setProofFile(event.target.files?.[0] ?? null);
-                          setConfirming(false);
-                        }}
-                      />
-                    </label>
+                    <PhotoPicker
+                      file={proofFile}
+                      onPick={(f) => {
+                        setProofFile(f);
+                        setConfirming(false);
+                      }}
+                      label="Subir comprobante (obligatorio)"
+                      icon={Upload}
+                    />
                   ) : null}
                 </>
               ) : null}
