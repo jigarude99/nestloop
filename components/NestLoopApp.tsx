@@ -1273,6 +1273,8 @@ function ExpenseDetail({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [viewingReceipt, setViewingReceipt] = useState(false);
+  const receiptHistoryPushedRef = useRef(false);
 
   const payer = getPerson(expense.paidBy);
   const currentShare = expense.shares.find((share) => share.personId === currentUser.id);
@@ -1295,6 +1297,34 @@ function ExpenseDetail({
     reimbursementCount > 0 &&
     (!bulkNeedsProof || !!bulkProofFile) &&
     !busy;
+
+  useEffect(() => {
+    if (!viewingReceipt) return;
+    const closeFromBack = () => {
+      receiptHistoryPushedRef.current = false;
+      setViewingReceipt(false);
+    };
+    window.addEventListener("popstate", closeFromBack);
+    return () => window.removeEventListener("popstate", closeFromBack);
+  }, [viewingReceipt]);
+
+  function openReceiptViewer() {
+    if (!expense.receiptPath) return;
+    setViewingReceipt(true);
+    if (!receiptHistoryPushedRef.current) {
+      window.history.pushState({ nestloopReceiptViewer: expense.id }, "", window.location.href);
+      receiptHistoryPushedRef.current = true;
+    }
+  }
+
+  function closeReceiptViewer() {
+    if (receiptHistoryPushedRef.current && window.history.state?.nestloopReceiptViewer === expense.id) {
+      window.history.back();
+      return;
+    }
+    receiptHistoryPushedRef.current = false;
+    setViewingReceipt(false);
+  }
 
   async function run(action: () => Promise<void>) {
     setBusy(true);
@@ -1324,7 +1354,18 @@ function ExpenseDetail({
         <div className="detail-hero">
           <div className="receipt-preview">
             {expense.receiptPath ? (
-              <SignedImage bucket="receipts" path={expense.receiptPath} alt="Factura" />
+              <button
+                className="receipt-open-button"
+                onClick={openReceiptViewer}
+                type="button"
+                aria-label="Ver factura completa"
+              >
+                <SignedImage bucket="receipts" path={expense.receiptPath} alt="Factura" />
+                <span className="receipt-open-hint">
+                  <ImageIcon size={15} />
+                  Ver completa
+                </span>
+              </button>
             ) : (
               <>
                 <ReceiptText size={28} />
@@ -1496,6 +1537,23 @@ function ExpenseDetail({
           <span>Agregado {relativeDate(expense.createdAt)}</span>
         </div>
       </div>
+
+      {viewingReceipt && expense.receiptPath ? (
+        <ModalBackdrop onClose={closeReceiptViewer}>
+          <div className="modal-sheet photo-sheet receipt-full-sheet">
+            <div className="modal-header">
+              <div>
+                <p className="eyebrow">Factura completa</p>
+                <h2>{expense.title}</h2>
+              </div>
+              <button className="icon-button" onClick={closeReceiptViewer} type="button" aria-label="Volver al gasto">
+                <X size={20} />
+              </button>
+            </div>
+            <SignedImage bucket="receipts" path={expense.receiptPath} alt={`Factura de ${expense.title}`} />
+          </div>
+        </ModalBackdrop>
+      ) : null}
     </ModalBackdrop>
   );
 }

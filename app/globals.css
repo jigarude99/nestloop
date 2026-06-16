@@ -2395,6 +2395,52 @@ textarea:focus {
   object-fit: cover;
 }
 
+.receipt-open-button {
+  position: relative;
+  display: grid;
+  width: 100%;
+  min-height: 154px;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.receipt-open-button:focus-visible {
+  outline: 3px solid rgba(15, 159, 122, 0.35);
+  outline-offset: 3px;
+}
+
+.receipt-open-hint {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 6px;
+  border-radius: 999px;
+  background: rgba(18, 31, 24, 0.86);
+  color: white;
+  font-size: 12px;
+  font-weight: 900;
+  padding: 0 11px;
+}
+
+.receipt-full-sheet {
+  width: min(920px, 100%);
+}
+
+.photo-sheet .receipt-img {
+  max-height: min(76vh, 840px);
+  object-fit: contain;
+  background: var(--soft);
+}
+
 @keyframes nl-spin {
   to {
     transform: rotate(360deg);
