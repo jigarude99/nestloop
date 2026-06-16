@@ -7,7 +7,9 @@ import {
   Camera,
   Check,
   CheckCircle2,
+  ChevronDown,
   ChevronRight,
+  ChevronUp,
   Clock3,
   CreditCard,
   Database,
@@ -978,34 +980,28 @@ function ExpenseCard({ expense, onOpen }: { expense: Expense; onOpen: (id: strin
   const confirmed = expense.shares.filter((share) => share.status === "confirmed").length;
   const progress = expense.shares.length ? Math.round((confirmed / expense.shares.length) * 100) : 0;
 
+  const allDone = expense.shares.length > 0 && confirmed === expense.shares.length;
+
   return (
     <button className="expense-card" onClick={() => onOpen(expense.id)} type="button">
-      <div className="expense-main">
-        <div className="receipt-thumb">
-          <ReceiptText size={23} />
-        </div>
-        <div>
-          <strong>{expense.title}</strong>
-          <span>
-            {expense.merchant || "Sin tienda"} • {shortDate(expense.purchasedAt)}
-          </span>
-        </div>
+      <div className="receipt-thumb">
+        <ReceiptText size={18} />
       </div>
-      <div className="expense-side">
+      <div className="expense-card-info">
+        <strong>{expense.title}</strong>
+        <small>
+          pagó {paidBy.shortName} · {shortDate(expense.purchasedAt)}
+        </small>
+      </div>
+      <div className="expense-card-amount">
         <strong>{money(expense.amount)}</strong>
-        <span>pagó {paidBy.shortName}</span>
+        <small className={allDone ? "done" : ""}>
+          {allDone ? "Saldado" : `${confirmed}/${expense.shares.length}`}
+        </small>
       </div>
-      <div className="progress-line" aria-label={`${progress}% confirmado`}>
+      <span className="expense-card-progress" aria-label={`${progress}% confirmado`}>
         <span style={{ width: `${progress}%` }} />
-      </div>
-      <div className="expense-footer">
-        <div className="mini-avatars">
-          {expense.shares.map((share) => (
-            <Avatar key={share.personId} person={getPerson(share.personId)} size="sm" />
-          ))}
-        </div>
-        <span>{confirmed}/{expense.shares.length} listos</span>
-      </div>
+      </span>
     </button>
   );
 }
@@ -1505,40 +1501,108 @@ function ExpensesView({
   currentUser,
   expenses,
   onCreate,
+  onOpenBalance,
   setActiveExpenseId
 }: {
   currentUser: Person;
   expenses: Expense[];
   onCreate: (input: NewExpenseInput) => Promise<void>;
+  onOpenBalance: (person: Person) => void;
   setActiveExpenseId: (id: string) => void;
 }) {
+  const { people, currentUserId } = useApp();
+  const [tab, setTab] = useState<"expenses" | "balances">("expenses");
   const [showForm, setShowForm] = useState(false);
+  const others = people.filter((p) => p.id !== currentUserId);
+
+  const myTotals = useMemo(() => {
+    let owe = 0;
+    let get = 0;
+    for (const other of others) {
+      const pair = pairwiseBalance(expenses, currentUserId, other.id);
+      owe += pair.iOwe;
+      get += pair.theyOwe;
+    }
+    return { owe, get };
+  }, [expenses, others, currentUserId]);
 
   return (
     <section className="view-stack">
-      <div className="section-heading">
-        <div>
-          <p className="eyebrow">Gastos compartidos</p>
-          <h1>Cada factura tiene su lugar.</h1>
+      <div className="view-head">
+        <h1 className="view-title">Gastos y saldos</h1>
+        <div className="subtabs">
+          <button className={tab === "expenses" ? "active" : ""} onClick={() => setTab("expenses")} type="button">
+            Gastos
+          </button>
+          <button className={tab === "balances" ? "active" : ""} onClick={() => setTab("balances")} type="button">
+            Saldos
+          </button>
         </div>
-        <button className="primary-action" onClick={() => setShowForm(true)} type="button">
-          <Plus size={19} />
-          Agregar gasto
-        </button>
       </div>
 
-      {expenses.length ? (
-        <div className="expense-list">
-          {expenses.map((expense) => (
-            <ExpenseCard expense={expense} key={expense.id} onOpen={setActiveExpenseId} />
-          ))}
-        </div>
+      {tab === "expenses" ? (
+        <>
+          <button className="primary-action full" onClick={() => setShowForm(true)} type="button">
+            <Plus size={19} />
+            Agregar gasto
+          </button>
+          {expenses.length ? (
+            <div className="expense-list">
+              {expenses.map((expense) => (
+                <ExpenseCard expense={expense} key={expense.id} onOpen={setActiveExpenseId} />
+              ))}
+            </div>
+          ) : (
+            <div className="empty-state">
+              <ReceiptText size={28} />
+              <strong>Aún no hay gastos</strong>
+              <span>Crea el primero con el botón “Agregar gasto”.</span>
+            </div>
+          )}
+        </>
       ) : (
-        <div className="empty-state">
-          <ReceiptText size={28} />
-          <strong>Aún no hay gastos</strong>
-          <span>Crea el primero con el botón “Agregar gasto”.</span>
-        </div>
+        <>
+          <div className="balance-summary">
+            <div className="balance-summary-cell">
+              <span>Debes en total</span>
+              <strong className="coral-text">{money(myTotals.owe)}</strong>
+            </div>
+            <div className="balance-summary-divider" />
+            <div className="balance-summary-cell">
+              <span>Te deben</span>
+              <strong className="mint-text">{money(myTotals.get)}</strong>
+            </div>
+          </div>
+
+          {others.length ? (
+            <div className="settle-list">
+              {others.map((person) => {
+                const pair = pairwiseBalance(expenses, currentUserId, person.id);
+                const tone = pair.net > 0 ? "owe" : pair.net < 0 ? "get" : "even";
+                const label = pair.net > 0 ? "Le debes" : pair.net < 0 ? "Te debe" : "A mano";
+                return (
+                  <button className="settle-row" key={person.id} onClick={() => onOpenBalance(person)} type="button">
+                    <Avatar person={person} size="md" />
+                    <span className="settle-row-main">
+                      <strong>{person.name}</strong>
+                      <small>{pair.net === 0 ? "Sin cuentas abiertas" : `${label} en neto`}</small>
+                    </span>
+                    <span className={`settle-amount ${tone}`}>
+                      {pair.net === 0 ? "A mano" : money(Math.abs(pair.net))}
+                    </span>
+                    <ChevronRight size={19} />
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="empty-state">
+              <Users size={28} />
+              <strong>Aún están solos en la casa</strong>
+              <span>Invita a tu familia desde “Personas”.</span>
+            </div>
+          )}
+        </>
       )}
 
       {showForm ? (
@@ -1686,21 +1750,28 @@ function RotationForm({
   const [title, setTitle] = useState(initial?.title ?? "Comprar agua");
   const [cadence, setCadence] = useState(initial?.cadence ?? "Cuando se acaba");
   const [icon, setIcon] = useState<RotationIcon>(initial?.icon ?? "water");
-  const [queue, setQueue] = useState<Record<string, boolean>>(() =>
-    Object.fromEntries(people.map((p) => [p.id, initial ? initial.queue.includes(p.id) : true]))
+  const [order, setOrder] = useState<string[]>(() =>
+    initial ? initial.queue.filter((id) => people.some((p) => p.id === id)) : people.map((p) => p.id)
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Conserva el orden original del turno al editar; los nuevos van al final.
-  const orderedIds = useMemo(() => {
-    const base = initial ? initial.queue.filter((id) => queue[id]) : [];
-    const extras = people.map((p) => p.id).filter((id) => queue[id] && !base.includes(id));
-    return [...base, ...extras];
-  }, [initial, people, queue]);
-  const chosen = orderedIds
+  const chosen = order
     .map((id) => people.find((p) => p.id === id))
     .filter((p): p is Person => !!p);
+  const available = people.filter((p) => !order.includes(p.id));
+
+  function move(index: number, dir: -1 | 1) {
+    setOrder((cur) => {
+      const j = index + dir;
+      if (j < 0 || j >= cur.length) return cur;
+      const next = cur.slice();
+      [next[index], next[j]] = [next[j], next[index]];
+      return next;
+    });
+  }
+  const removeFromOrder = (id: string) => setOrder((cur) => cur.filter((x) => x !== id));
+  const addToOrder = (id: string) => setOrder((cur) => (cur.includes(id) ? cur : [...cur, id]));
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -1749,26 +1820,50 @@ function RotationForm({
             <option value="plants">Plantas / otro</option>
           </select>
         </label>
-        <div className="people-picker">
-          {people.map((person) => {
-            const on = queue[person.id];
-            return (
-              <div className={`share-row ${on ? "selected" : ""}`} key={person.id}>
-                <button
-                  className="check-person"
-                  type="button"
-                  onClick={() => setQueue((c) => ({ ...c, [person.id]: !c[person.id] }))}
-                >
-                  <Avatar person={person} size="sm" />
-                  <span>{person.name}</span>
-                  {on ? <Check size={18} /> : null}
-                </button>
+        <div className="order-block">
+          <span className="order-title">Orden del turno</span>
+          <div className="order-list">
+            {chosen.map((person, index) => (
+              <div className="order-row" key={person.id}>
+                <span className="order-num">{index + 1}</span>
+                <Avatar person={person} size="sm" />
+                <span className="order-name">{person.name}</span>
+                <div className="order-actions">
+                  <button type="button" disabled={index === 0} onClick={() => move(index, -1)} aria-label="Subir">
+                    <ChevronUp size={17} />
+                  </button>
+                  <button
+                    type="button"
+                    disabled={index === chosen.length - 1}
+                    onClick={() => move(index, 1)}
+                    aria-label="Bajar"
+                  >
+                    <ChevronDown size={17} />
+                  </button>
+                  <button type="button" onClick={() => removeFromOrder(person.id)} aria-label="Quitar">
+                    <X size={16} />
+                  </button>
+                </div>
               </div>
-            );
-          })}
+            ))}
+            {chosen.length === 0 ? <p className="order-empty">Agrega al menos una persona.</p> : null}
+          </div>
+          {available.length ? (
+            <div className="order-add">
+              <span>Agregar:</span>
+              {available.map((person) => (
+                <button type="button" key={person.id} className="order-add-chip" onClick={() => addToOrder(person.id)}>
+                  <Avatar person={person} size="sm" />
+                  {person.shortName}
+                </button>
+              ))}
+            </div>
+          ) : null}
         </div>
         <p className="difference-note ok" style={{ marginTop: 0 }}>
-          El orden de la lista marca quién va primero. Empieza por {chosen[0]?.name ?? "—"}.
+          {chosen.length
+            ? `Empieza por ${chosen[0]?.name}. Después sigue el orden de la lista.`
+            : "Elige el orden de la rotación."}
         </p>
         {error ? <div className="auth-alert error">{error}</div> : null}
         <button className="primary-action full" type="submit" disabled={!title.trim() || !chosen.length || saving}>
@@ -2247,30 +2342,14 @@ function BalanceSheet({
 }
 
 function PeopleView({
-  expenses,
   rotations,
-  household,
-  onOpenBalance
+  household
 }: {
-  expenses: Expense[];
   rotations: Rotation[];
   household: Household;
-  onOpenBalance: (person: Person) => void;
 }) {
   const { people, currentUserId } = useApp();
   const [copied, setCopied] = useState(false);
-  const others = people.filter((p) => p.id !== currentUserId);
-
-  const myTotals = useMemo(() => {
-    let owe = 0;
-    let get = 0;
-    for (const other of others) {
-      const pair = pairwiseBalance(expenses, currentUserId, other.id);
-      owe += pair.iOwe;
-      get += pair.theyOwe;
-    }
-    return { owe, get };
-  }, [expenses, others, currentUserId]);
 
   async function copyCode() {
     if (!household.invite_code) return;
@@ -2287,66 +2366,11 @@ function PeopleView({
     <section className="view-stack">
       <div className="section-heading">
         <div>
-          <p className="eyebrow">Saldos</p>
-          <h1>Cuentas claras entre todos.</h1>
-        </div>
-      </div>
-
-      <div className="balance-summary">
-        <div className="balance-summary-cell">
-          <span>Debes en total</span>
-          <strong className="coral-text">{money(myTotals.owe)}</strong>
-        </div>
-        <div className="balance-summary-divider" />
-        <div className="balance-summary-cell">
-          <span>Te deben</span>
-          <strong className="mint-text">{money(myTotals.get)}</strong>
-        </div>
-      </div>
-
-      <div className="section-heading compact">
-        <div>
-          <p className="eyebrow">Tus cuentas</p>
-          <h2>Con cada persona</h2>
-        </div>
-      </div>
-
-      {others.length ? (
-        <div className="settle-list">
-          {others.map((person) => {
-            const pair = pairwiseBalance(expenses, currentUserId, person.id);
-            const tone = pair.net > 0 ? "owe" : pair.net < 0 ? "get" : "even";
-            const label =
-              pair.net > 0 ? "Le debes" : pair.net < 0 ? "Te debe" : "A mano";
-            return (
-              <button className="settle-row" key={person.id} onClick={() => onOpenBalance(person)} type="button">
-                <Avatar person={person} size="md" />
-                <span className="settle-row-main">
-                  <strong>{person.name}</strong>
-                  <small>{pair.net === 0 ? "Sin cuentas abiertas" : `${label} en neto`}</small>
-                </span>
-                <span className={`settle-amount ${tone}`}>
-                  {pair.net === 0 ? "A mano" : money(Math.abs(pair.net))}
-                </span>
-                <ChevronRight size={19} />
-              </button>
-            );
-          })}
-        </div>
-      ) : (
-        <div className="empty-state">
-          <Users size={28} />
-          <strong>Aún están solos en la casa</strong>
-          <span>Invita a tu familia con el código de abajo.</span>
-        </div>
-      )}
-
-      <div className="section-heading compact">
-        <div>
           <p className="eyebrow">La casa</p>
-          <h2>Quién es quién</h2>
+          <h1>Quiénes viven aquí.</h1>
         </div>
       </div>
+
       <div className="member-chips">
         {people.map((person) => {
           const nextTurn = rotations.find((rotation) => rotation.queue[rotation.currentIndex] === person.id);
@@ -2738,6 +2762,24 @@ export function NestLoopApp({
     setNotifications(await fetchNotifications(hid));
   }, [hid]);
 
+  // Recarga silenciosa de todo (sin spinner): para refresco en vivo.
+  const reloadAll = useCallback(async () => {
+    try {
+      const [e, r, s, n] = await Promise.all([
+        fetchExpenses(hid),
+        fetchRotations(hid),
+        fetchSlots(hid),
+        fetchNotifications(hid)
+      ]);
+      setExpenses(e);
+      setRotations(r);
+      setSlots(s);
+      setNotifications(n);
+    } catch {
+      /* error transitorio de red: lo intenta de nuevo en el próximo ciclo */
+    }
+  }, [hid]);
+
   useEffect(() => {
     let on = true;
     setLoading(true);
@@ -2760,6 +2802,26 @@ export function NestLoopApp({
       on = false;
     };
   }, [hid]);
+
+  // Actualización en vivo: refresca mientras la app está abierta (cada 12s)
+  // y al instante cuando vuelves a la app (cambio de pestaña / volver al frente).
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const tick = () => {
+      if (document.visibilityState === "visible") void reloadAll();
+    };
+    const interval = window.setInterval(tick, 12_000);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void reloadAll();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
+    };
+  }, [reloadAll]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !("Notification" in window)) return;
@@ -2997,6 +3059,7 @@ export function NestLoopApp({
                   currentUser={currentUser}
                   expenses={expenses}
                   onCreate={handleCreateExpense}
+                  onOpenBalance={setBalancePerson}
                   setActiveExpenseId={setActiveExpenseId}
                 />
               ) : null}
@@ -3023,12 +3086,7 @@ export function NestLoopApp({
               ) : null}
 
               {activeView === "people" ? (
-                <PeopleView
-                  expenses={expenses}
-                  household={household}
-                  onOpenBalance={setBalancePerson}
-                  rotations={rotations}
-                />
+                <PeopleView household={household} rotations={rotations} />
               ) : null}
             </>
           )}
