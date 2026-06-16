@@ -1279,7 +1279,10 @@ function ExpenseDetail({
   const needsProof = method !== "cash";
   const canSendPayment =
     !!currentShare && currentShare.status !== "confirmed" && (!needsProof || !!proofFile) && !busy;
-  const canManage = expense.createdBy === currentUser.id || expense.paidBy === currentUser.id;
+  const canManage =
+    expense.createdBy === currentUser.id ||
+    expense.paidBy === currentUser.id ||
+    currentUser.role === "admin";
   const unsettledShares = expense.shares.filter(
     (share) => share.personId !== expense.paidBy && share.status !== "confirmed"
   );
@@ -1631,10 +1634,12 @@ function RotationCard({
   const [showActions, setShowActions] = useState(false);
   const longPress = useLongPress(() => setShowActions(true));
 
+  const isAdmin = getPerson(currentUserId).role === "admin";
   const Icon = rotationIcon(rotation.icon);
   const currentPerson = getPerson(rotation.queue[rotation.currentIndex]);
   const isMyTurn = rotation.queue[rotation.currentIndex] === currentUserId;
-  const canUndo = rotation.history[0]?.personId === currentUserId;
+  const canMark = isMyTurn || isAdmin;
+  const canUndo = (rotation.history[0]?.personId === currentUserId || isAdmin) && rotation.history.length > 0;
 
   async function run(action: () => Promise<void>) {
     setBusy(true);
@@ -1685,7 +1690,7 @@ function RotationCard({
         })}
       </div>
 
-      {isMyTurn ? (
+      {canMark ? (
         <button
           className="secondary-action full"
           disabled={busy}
@@ -1693,7 +1698,7 @@ function RotationCard({
           type="button"
         >
           <CheckCircle2 size={19} />
-          {busy ? "Guardando…" : "Marcar hecho"}
+          {busy ? "Guardando…" : isMyTurn ? "Marcar hecho" : `Marcar hecho por ${currentPerson.shortName}`}
         </button>
       ) : (
         <button className="secondary-action full" disabled type="button">
@@ -1705,7 +1710,7 @@ function RotationCard({
       {canUndo ? (
         <button className="undo-link" disabled={busy} onClick={() => run(() => onUndo(rotation))} type="button">
           <Undo2 size={15} />
-          Deshacer mi turno
+          {rotation.history[0]?.personId === currentUserId ? "Deshacer mi turno" : "Deshacer último turno"}
         </button>
       ) : null}
 
@@ -1750,6 +1755,7 @@ function RotationForm({
   const [title, setTitle] = useState(initial?.title ?? "Comprar agua");
   const [cadence, setCadence] = useState(initial?.cadence ?? "Cuando se acaba");
   const [icon, setIcon] = useState<RotationIcon>(initial?.icon ?? "water");
+  const [hidden, setHidden] = useState(initial?.hiddenFromNonParticipants ?? false);
   const [order, setOrder] = useState<string[]>(() =>
     initial ? initial.queue.filter((id) => people.some((p) => p.id === id)) : people.map((p) => p.id)
   );
@@ -1783,6 +1789,7 @@ function RotationForm({
         title: title.trim(),
         cadence: cadence.trim() || "Por turnos",
         icon,
+        hiddenFromNonParticipants: hidden,
         queue: chosen.map((p) => p.id)
       });
       onClose();
@@ -1860,6 +1867,13 @@ function RotationForm({
             </div>
           ) : null}
         </div>
+        <label className={`privacy-option ${hidden ? "active" : ""}`}>
+          <input checked={hidden} onChange={(event) => setHidden(event.target.checked)} type="checkbox" />
+          <span>
+            <strong>Ocultar a quienes no participan</strong>
+            <small>Solo lo verán las personas del turno y el administrador.</small>
+          </span>
+        </label>
         <p className="difference-note ok" style={{ marginTop: 0 }}>
           {chosen.length
             ? `Empieza por ${chosen[0]?.name}. Después sigue el orden de la lista.`

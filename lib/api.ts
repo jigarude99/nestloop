@@ -48,6 +48,7 @@ export type Rotation = {
   icon: RotationIcon;
   queue: string[];
   currentIndex: number;
+  hiddenFromNonParticipants: boolean;
   history: RotationEvent[];
 };
 
@@ -111,6 +112,7 @@ export type NewRotationInput = {
   cadence: string;
   icon: RotationIcon;
   queue: string[];
+  hiddenFromNonParticipants: boolean;
 };
 
 export type NewSlotInput = {
@@ -491,7 +493,7 @@ export async function fetchRotations(householdId: string): Promise<Rotation[]> {
   const { data, error } = await supabase
     .from("task_rotations")
     .select(
-      "id,title,cadence,icon,current_index,created_at," +
+      "id,title,cadence,icon,current_index,created_at,hidden_from_non_participants," +
         "members:task_rotation_members(profile_id,position)," +
         "history:task_events(profile_id,completed_at,note)"
     )
@@ -506,6 +508,7 @@ export async function fetchRotations(householdId: string): Promise<Rotation[]> {
     cadence: row.cadence,
     icon: (row.icon ?? "water") as RotationIcon,
     currentIndex: row.current_index ?? 0,
+    hiddenFromNonParticipants: row.hidden_from_non_participants ?? false,
     queue: (row.members ?? [])
       .slice()
       .sort((a: any, b: any) => a.position - b.position)
@@ -534,7 +537,8 @@ export async function createRotation(
     title: input.title,
     cadence: input.cadence,
     icon: input.icon,
-    current_index: 0
+    current_index: 0,
+    hidden_from_non_participants: input.hiddenFromNonParticipants
   });
   if (rotErr) throw rotErr;
 
@@ -572,7 +576,13 @@ export async function updateRotation(rotationId: string, input: NewRotationInput
   const supabase = getSupabase();
   const { error: upErr } = await supabase
     .from("task_rotations")
-    .update({ title: input.title, cadence: input.cadence, icon: input.icon, current_index: 0 })
+    .update({
+      title: input.title,
+      cadence: input.cadence,
+      icon: input.icon,
+      current_index: 0,
+      hidden_from_non_participants: input.hiddenFromNonParticipants
+    })
     .eq("id", rotationId);
   if (upErr) throw upErr;
 
