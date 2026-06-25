@@ -823,16 +823,34 @@ function HomeView({
   currentUser,
   expenses,
   rotations,
+  recurringBills,
   setActiveView,
-  setActiveExpenseId
+  setActiveExpenseId,
+  onOpenMonthly
 }: {
   currentUser: Person;
   expenses: Expense[];
   rotations: Rotation[];
+  recurringBills: RecurringBill[];
   setActiveView: (view: View) => void;
   setActiveExpenseId: (id: string) => void;
+  onOpenMonthly: () => void;
 }) {
   const { getPerson } = useApp();
+
+  // Pagos mensuales cuyo periodo activo vence en ≤7 días (o ya venció) y no he pagado
+  const monthlyDue = recurringBills
+    .flatMap((bill) => {
+      const myShare = bill.shares.find((s) => s.personId === currentUser.id);
+      if (!myShare || myShare.amount <= 0) return [];
+      const period = billActivePeriod(bill);
+      const iPaid = bill.payments.some((p) => p.period === period && p.personId === currentUser.id);
+      if (iPaid) return [];
+      const daysLeft = Math.round((periodDueDate(period, bill.dueDay).getTime() - Date.now()) / 86_400_000);
+      if (daysLeft > 7) return [];
+      return [{ bill, amount: myShare.amount, period, daysLeft }];
+    })
+    .sort((a, b) => a.daysLeft - b.daysLeft);
 
   const myOpenShares = expenses.flatMap((expense) =>
     expense.shares
@@ -903,6 +921,27 @@ function HomeView({
       </div>
 
       <div className="action-list">
+        {monthlyDue.map(({ bill, amount, period, daysLeft }) => {
+          const dueLabel =
+            daysLeft < 0
+              ? `Vencida hace ${-daysLeft} día${-daysLeft === 1 ? "" : "s"}`
+              : daysLeft === 0
+                ? "Vence hoy"
+                : daysLeft === 1
+                  ? "Vence mañana"
+                  : `Vence en ${daysLeft} días`;
+          return (
+            <button className="action-row" key={`bill-${bill.id}`} onClick={onOpenMonthly} type="button">
+              <IconBubble icon={CalendarDays} tone={daysLeft < 0 ? "coral" : "sun"} />
+              <span>
+                <strong>Pagar {bill.title} ({money(amount)})</strong>
+                <small>{dueLabel} · {periodMonthName(period)}</small>
+              </span>
+              <ChevronRight size={19} />
+            </button>
+          );
+        })}
+
         {myOpenShares.slice(0, 3).map(({ expense, share }) => (
           <button
             className="action-row"
@@ -949,7 +988,7 @@ function HomeView({
           );
         })}
 
-        {!myOpenShares.length && !needsConfirmation.length && !currentTurns.length ? (
+        {!monthlyDue.length && !myOpenShares.length && !needsConfirmation.length && !currentTurns.length ? (
           <div className="empty-state">
             <CheckCircle2 size={28} />
             <strong>Todo al día</strong>
@@ -3649,8 +3688,13 @@ export function NestLoopApp({
                   currentUser={currentUser}
                   expenses={expenses}
                   rotations={rotations}
+                  recurringBills={recurringBills}
                   setActiveExpenseId={setActiveExpenseId}
                   setActiveView={setActiveView}
+                  onOpenMonthly={() => {
+                    setExpensesTab("monthly");
+                    setActiveView("expenses");
+                  }}
                 />
               ) : null}
 
