@@ -1517,6 +1517,11 @@ textarea:focus {
   color: #b03b3b;
 }
 
+.recurring-due-chip.future {
+  background: var(--soft);
+  color: var(--muted);
+}
+
 .recurring-people {
   display: flex;
   align-items: center;

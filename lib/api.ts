@@ -160,6 +160,61 @@ export function currentPeriod(): string {
   return new Date().toISOString().slice(0, 7);
 }
 
+const MESES_ES = [
+  "enero", "febrero", "marzo", "abril", "mayo", "junio",
+  "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"
+];
+function periodKey(year: number, month0: number): string {
+  return `${year}-${String(month0 + 1).padStart(2, "0")}`;
+}
+/** Nombre del mes (en español) de un periodo 'YYYY-MM'. */
+export function periodMonthName(period: string): string {
+  const m = Number(period.slice(5, 7));
+  return MESES_ES[m - 1] ?? period;
+}
+/** Fecha de vencimiento (UTC) del periodo dado para un día de pago. */
+export function periodDueDate(period: string, dueDay: number): Date {
+  const year = Number(period.slice(0, 4));
+  const month0 = Number(period.slice(5, 7)) - 1;
+  return new Date(Date.UTC(year, month0, Math.min(dueDay, 28)));
+}
+
+/**
+ * "Periodo activo" de una cuenta mensual: el primer mes (desde el ancla) que
+ * aún NO han pagado todos los participantes. El ancla es el mes de creación si
+ * se creó en/antes del día de pago; si no, el mes siguiente. Así, si al crear
+ * la cuenta el plazo de este mes ya pasó, arranca en el mes siguiente, y avanza
+ * solo conforme se paga. Misma lógica que recurring_active_period() en la BD.
+ */
+export function billActivePeriod(bill: RecurringBill): string {
+  const created = new Date(bill.createdAt);
+  let year = created.getUTCFullYear();
+  let month0 = created.getUTCMonth();
+  if (created.getUTCDate() > Math.min(bill.dueDay, 28)) {
+    month0 += 1;
+    if (month0 > 11) { month0 = 0; year += 1; }
+  }
+  const parts = bill.shares.filter((s) => s.amount > 0);
+  if (parts.length === 0) return periodKey(year, month0);
+
+  for (let guard = 0; guard <= 240; guard++) {
+    const period = periodKey(year, month0);
+    const allPaid = parts.every((s) =>
+      bill.payments.some((p) => p.period === period && p.personId === s.personId)
+    );
+    if (!allPaid) return period;
+    month0 += 1;
+    if (month0 > 11) { month0 = 0; year += 1; }
+  }
+  return periodKey(year, month0);
+}
+
+/** El último periodo que pagó una persona en una cuenta (para deshacer). */
+export function lastPaidPeriod(bill: RecurringBill, personId: string): string | null {
+  const mine = bill.payments.filter((p) => p.personId === personId).map((p) => p.period);
+  return mine.length ? mine.sort().slice(-1)[0] : null;
+}
+
 const RECEIPTS = "receipts";
 const PROOFS = "payment-proofs";
 const VAPID_PUBLIC_KEY =

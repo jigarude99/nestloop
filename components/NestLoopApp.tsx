@@ -60,7 +60,10 @@ import {
   createRotation as apiCreateRotation,
   createSlot as apiCreateSlot,
   completeRotation as apiCompleteRotation,
-  currentPeriod,
+  billActivePeriod,
+  lastPaidPeriod,
+  periodDueDate,
+  periodMonthName,
   deleteExpense as apiDeleteExpense,
   deleteRecurringBill as apiDeleteRecurringBill,
   deleteRotation as apiDeleteRotation,
@@ -1571,16 +1574,21 @@ function ExpenseDetail({
 // ---------------------------------------------------------------------------
 // PAGOS MENSUALES EN CONJUNTO (renta, etc.)
 // ---------------------------------------------------------------------------
-/** Estado del vencimiento del mes en curso para mostrar en la tarjeta. */
-function recurringDueStatus(dueDay: number): { daysLeft: number; label: string; tone: "soon" | "today" | "overdue" } {
+/** Estado del vencimiento del PERIODO ACTIVO para mostrar en la tarjeta. */
+function recurringDueStatus(
+  period: string,
+  dueDay: number
+): { daysLeft: number; label: string; tone: "soon" | "today" | "overdue" | "future" } {
   const now = new Date();
-  const due = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), Math.min(dueDay, 28));
+  const due = periodDueDate(period, dueDay).getTime();
   const todayUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
   const daysLeft = Math.round((due - todayUtc) / 86_400_000);
+  const day = Math.min(dueDay, 28);
   if (daysLeft < 0) return { daysLeft, label: `Vencida hace ${-daysLeft} día${-daysLeft === 1 ? "" : "s"}`, tone: "overdue" };
   if (daysLeft === 0) return { daysLeft, label: "Vence hoy", tone: "today" };
   if (daysLeft === 1) return { daysLeft, label: "Vence mañana", tone: "today" };
-  return { daysLeft, label: `Faltan ${daysLeft} días`, tone: "soon" };
+  if (daysLeft <= 7) return { daysLeft, label: `Faltan ${daysLeft} días`, tone: "soon" };
+  return { daysLeft, label: `Próximo: ${day} de ${periodMonthName(period)}`, tone: "future" };
 }
 
 function RecurringPayForm({
@@ -1828,14 +1836,12 @@ function RecurringBillForm({
 
 function RecurringBillCard({
   bill,
-  period,
   onMarkPaid,
   onUnmark,
   onEdit,
   onDelete
 }: {
   bill: RecurringBill;
-  period: string;
   onMarkPaid: (bill: RecurringBill, amount: number, method: PaymentMethod, proofFile: File | null) => Promise<void>;
   onUnmark: (bill: RecurringBill) => Promise<void>;
   onEdit: (bill: RecurringBill) => void;
@@ -1853,13 +1859,15 @@ function RecurringBillCard({
     if (canManage) setShowActions(true);
   });
 
+  const period = billActivePeriod(bill);
+  const monthName = periodMonthName(period);
   const participants = bill.shares.filter((s) => people.some((p) => p.id === s.personId));
   const myShare = bill.shares.find((s) => s.personId === currentUserId);
-  const paidThisMonth = new Set(bill.payments.filter((p) => p.period === period).map((p) => p.personId));
-  const paidCount = participants.filter((s) => paidThisMonth.has(s.personId)).length;
-  const iPaid = paidThisMonth.has(currentUserId);
+  const paidThisPeriod = new Set(bill.payments.filter((p) => p.period === period).map((p) => p.personId));
+  const paidCount = participants.filter((s) => paidThisPeriod.has(s.personId)).length;
+  const iPaid = paidThisPeriod.has(currentUserId);
   const total = bill.shares.reduce((sum, s) => sum + s.amount, 0);
-  const status = recurringDueStatus(bill.dueDay);
+  const status = recurringDueStatus(period, bill.dueDay);
 
   async function run(action: () => Promise<void>) {
     setBusy(true);
@@ -1893,7 +1901,7 @@ function RecurringBillCard({
       <div className="recurring-people">
         {participants.map((s) => {
           const person = getPerson(s.personId);
-          const done = paidThisMonth.has(s.personId);
+          const done = paidThisPeriod.has(s.personId);
           return (
             <span className={`recurring-person ${done ? "paid" : ""}`} key={s.personId} title={`${person.shortName}: ${done ? "pagó" : "pendiente"}`}>
               <Avatar person={person} size="sm" />
@@ -1901,7 +1909,7 @@ function RecurringBillCard({
             </span>
           );
         })}
-        <small className="recurring-count">{paidCount}/{participants.length} pagaron este mes</small>
+        <small className="recurring-count">{paidCount}/{participants.length} pagaron · {monthName}</small>
       </div>
 
       {myShare ? (
@@ -1909,7 +1917,7 @@ function RecurringBillCard({
           <>
             <div className="recurring-paid-banner">
               <CheckCircle2 size={18} />
-              Pagaste tu parte ({money(myShare.amount)}) este mes
+              Pagaste tu parte de {monthName} ({money(myShare.amount)})
             </div>
             <button className="undo-link" disabled={busy} onClick={() => run(() => onUnmark(bill))} type="button">
               <Undo2 size={15} />
@@ -1987,12 +1995,18 @@ function ExpensesView({
   const [showBillForm, setShowBillForm] = useState(false);
   const [editingBill, setEditingBill] = useState<RecurringBill | null>(null);
   const others = people.filter((p) => p.id !== currentUserId);
-  const period = currentPeriod();
-  const iOweMonthly = recurringBills.some(
-    (bill) =>
-      bill.shares.some((s) => s.personId === currentUserId) &&
-      !bill.payments.some((p) => p.period === period && p.personId === currentUserId)
-  );
+  // Punto en la subpestaña: tengo parte sin pagar del periodo activo y ya está
+  // dentro de la ventana de aviso (faltan ≤7 días o ya venció).
+  const iOweMonthly = recurringBills.some((bill) => {
+    if (!bill.shares.some((s) => s.personId === currentUserId)) return false;
+    const period = billActivePeriod(bill);
+    const iPaid = bill.payments.some((p) => p.period === period && p.personId === currentUserId);
+    if (iPaid) return false;
+    const daysLeft = Math.round(
+      (periodDueDate(period, bill.dueDay).getTime() - Date.now()) / 86_400_000
+    );
+    return daysLeft <= 7;
+  });
 
   const myTotals = useMemo(() => {
     let owe = 0;
@@ -2098,7 +2112,6 @@ function ExpensesView({
                 <RecurringBillCard
                   bill={bill}
                   key={bill.id}
-                  period={period}
                   onMarkPaid={onMarkBillPaid}
                   onUnmark={onUnmarkBill}
                   onEdit={setEditingBill}
@@ -3589,13 +3602,15 @@ export function NestLoopApp({
     method: PaymentMethod,
     proofFile: File | null
   ) {
-    await apiMarkRecurringPaid(hid, bill.id, currentUserId, currentPeriod(), amount, method, proofFile);
+    await apiMarkRecurringPaid(hid, bill.id, currentUserId, billActivePeriod(bill), amount, method, proofFile);
     await reloadRecurringBills();
     await reloadNotifications().catch(() => {});
     void triggerPushDispatch();
   }
   async function handleUnmarkRecurringPaid(bill: RecurringBill) {
-    await apiUnmarkRecurringPaid(bill.id, currentUserId, currentPeriod());
+    const period = lastPaidPeriod(bill, currentUserId);
+    if (!period) return;
+    await apiUnmarkRecurringPaid(bill.id, currentUserId, period);
     await reloadRecurringBills();
     await reloadNotifications().catch(() => {});
   }
