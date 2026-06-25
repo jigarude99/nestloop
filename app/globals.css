@@ -410,6 +410,7 @@ h2 {
 .board-card,
 .expense-card,
 .rotation-card,
+.recurring-card,
 .day-card,
 .person-card,
 .launch-panel {
@@ -501,7 +502,7 @@ h2 {
   background: transparent;
   color: var(--muted);
   font-weight: 850;
-  padding: 0 20px;
+  padding: 0 16px;
 }
 
 .subtabs button.active {
@@ -1449,11 +1450,144 @@ textarea:focus {
 }
 
 .rotation-card,
+.recurring-card,
 .person-card,
 .launch-panel {
   display: grid;
   gap: 14px;
   padding: 16px;
+}
+
+/* Pagos mensuales (renta, etc.) */
+.recurring-list {
+  display: grid;
+  gap: 12px;
+}
+
+.recurring-card {
+  gap: 11px;
+}
+
+.recurring-top {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.recurring-title {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.recurring-title strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 16px;
+}
+
+.recurring-title span {
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 700;
+}
+
+.recurring-due-chip {
+  justify-self: start;
+  border-radius: 999px;
+  padding: 3px 11px;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.recurring-due-chip.soon {
+  background: rgba(74, 144, 226, 0.14);
+  color: #2f6db0;
+}
+
+.recurring-due-chip.today {
+  background: rgba(246, 198, 79, 0.26);
+  color: #8a6a08;
+}
+
+.recurring-due-chip.overdue {
+  background: rgba(225, 95, 95, 0.16);
+  color: #b03b3b;
+}
+
+.recurring-people {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.recurring-person {
+  position: relative;
+  display: inline-flex;
+  opacity: 0.5;
+}
+
+.recurring-person.paid {
+  opacity: 1;
+}
+
+.recurring-person-check {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  border-radius: 999px;
+  background: #0f9f7a;
+  color: #fff;
+  padding: 1px;
+}
+
+.recurring-count {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.recurring-paid-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: var(--radius);
+  background:
+    linear-gradient(135deg, rgba(15, 159, 122, 0.16), transparent),
+    var(--soft);
+  color: #075f49;
+  font-weight: 800;
+  font-size: 13.5px;
+  padding: 10px 12px;
+}
+
+.recurring-paid-banner.muted {
+  background: var(--soft);
+  color: var(--muted);
+}
+
+.recurring-pay-amount {
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.recurring-pay-amount strong {
+  color: var(--ink);
+  font-size: 17px;
+}
+
+.subtab-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-left: 5px;
+  border-radius: 999px;
+  background: #e15f5f;
+  vertical-align: middle;
 }
 
 .current-turn {

@@ -63,7 +63,12 @@ export type ScheduleSlot = {
 };
 
 export type PushRegistrationResult = "granted" | "denied" | "unsupported";
-export type NotificationKind = "expense_due" | "payment_confirmation" | "task_turn" | "schedule_slot";
+export type NotificationKind =
+  | "expense_due"
+  | "payment_confirmation"
+  | "task_turn"
+  | "schedule_slot"
+  | "recurring_due";
 
 export type NotificationDelivery = {
   id: string;
@@ -122,6 +127,38 @@ export type NewSlotInput = {
   end: string;
   label: string;
 };
+
+// Pagos mensuales en conjunto (renta, etc.): cada quien paga su parte por su cuenta.
+export type RecurringShare = { personId: string; amount: number };
+export type RecurringPayment = {
+  personId: string;
+  period: string; // 'YYYY-MM'
+  method?: PaymentMethod;
+  proofName?: string;
+  proofPath?: string;
+  amount?: number;
+  paidAt: string;
+};
+export type RecurringBill = {
+  id: string;
+  title: string;
+  dueDay: number;
+  createdBy: string;
+  archivedAt?: string;
+  createdAt: string;
+  shares: RecurringShare[];
+  payments: RecurringPayment[];
+};
+export type NewRecurringBillInput = {
+  title: string;
+  dueDay: number;
+  participants: { personId: string; amount: number }[];
+};
+
+/** Periodo del mes en curso, 'YYYY-MM' (UTC, igual que el servidor). */
+export function currentPeriod(): string {
+  return new Date().toISOString().slice(0, 7);
+}
 
 const RECEIPTS = "receipts";
 const PROOFS = "payment-proofs";
@@ -785,6 +822,160 @@ function undoSettlementErrorMessage(message: string): string {
   if (message.includes("No hay cuotas")) return "No hay cuotas para restaurar en ese saldo.";
   if (message.includes("No autorizado")) return "No tienes permiso para deshacer ese saldo.";
   return "No se pudo deshacer el saldo. Intenta de nuevo.";
+}
+
+// ---------------------------------------------------------------------------
+// PAGOS MENSUALES EN CONJUNTO (renta, servicios fijos…)
+// Cada quien paga SU parte por su cuenta. No es reembolso.
+// ---------------------------------------------------------------------------
+export async function fetchRecurringBills(householdId: string): Promise<RecurringBill[]> {
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from("recurring_bills")
+    .select(
+      "id,title,due_day,created_by,archived_at,created_at," +
+        "shares:recurring_bill_shares(profile_id,amount_cents)," +
+        "payments:recurring_bill_payments(profile_id,period,method,proof_path,amount_cents,paid_at)"
+    )
+    .eq("household_id", householdId)
+    .is("archived_at", null)
+    .order("created_at", { ascending: true });
+
+  if (error) throw error;
+
+  return (data ?? []).map((row: any) => ({
+    id: row.id,
+    title: row.title,
+    dueDay: row.due_day,
+    createdBy: row.created_by,
+    archivedAt: row.archived_at ?? undefined,
+    createdAt: row.created_at,
+    shares: (row.shares ?? []).map((s: any) => ({
+      personId: s.profile_id,
+      amount: fromCents(s.amount_cents)
+    })),
+    payments: (row.payments ?? []).map((p: any) => ({
+      personId: p.profile_id,
+      period: p.period,
+      method: p.method ?? undefined,
+      proofName: basename(p.proof_path),
+      proofPath: p.proof_path ?? undefined,
+      amount: p.amount_cents != null ? fromCents(p.amount_cents) : undefined,
+      paidAt: p.paid_at
+    }))
+  }));
+}
+
+export async function createRecurringBill(
+  householdId: string,
+  currentUserId: string,
+  input: NewRecurringBillInput
+): Promise<void> {
+  const supabase = getSupabase();
+  const billId = newId();
+
+  const { error: billErr } = await supabase.from("recurring_bills").insert({
+    id: billId,
+    household_id: householdId,
+    title: input.title,
+    due_day: input.dueDay,
+    created_by: currentUserId
+  });
+  if (billErr) throw billErr;
+
+  const shares = input.participants
+    .filter((p) => p.amount > 0)
+    .map((p) => ({ bill_id: billId, profile_id: p.personId, amount_cents: toCents(p.amount) }));
+  if (shares.length) {
+    const { error: shErr } = await supabase.from("recurring_bill_shares").insert(shares);
+    if (shErr) throw shErr;
+  }
+}
+
+export async function updateRecurringBill(
+  billId: string,
+  input: NewRecurringBillInput
+): Promise<void> {
+  const supabase = getSupabase();
+
+  const { error: billErr } = await supabase
+    .from("recurring_bills")
+    .update({ title: input.title, due_day: input.dueDay })
+    .eq("id", billId);
+  if (billErr) throw billErr;
+
+  const { error: delErr } = await supabase
+    .from("recurring_bill_shares")
+    .delete()
+    .eq("bill_id", billId);
+  if (delErr) throw delErr;
+
+  const shares = input.participants
+    .filter((p) => p.amount > 0)
+    .map((p) => ({ bill_id: billId, profile_id: p.personId, amount_cents: toCents(p.amount) }));
+  if (shares.length) {
+    const { error: shErr } = await supabase.from("recurring_bill_shares").insert(shares);
+    if (shErr) throw shErr;
+  }
+}
+
+export async function deleteRecurringBill(billId: string): Promise<void> {
+  const supabase = getSupabase();
+  // shares y payments caen por ON DELETE CASCADE
+  const { error } = await supabase.from("recurring_bills").delete().eq("id", billId);
+  if (error) throw error;
+}
+
+/** Marca "mi parte pagada" para el mes dado (con comprobante opcional). */
+export async function markRecurringPaid(
+  householdId: string,
+  billId: string,
+  personId: string,
+  period: string,
+  amount: number,
+  method: PaymentMethod,
+  proofFile: File | null
+): Promise<void> {
+  const supabase = getSupabase();
+
+  let proofPath: string | null = null;
+  if (method !== "cash" && proofFile) {
+    const path = `${householdId}/recurring/${billId}/${personId}-${period}-${Date.now()}-${safeName(proofFile.name)}`;
+    const { error: upErr } = await supabase.storage.from(PROOFS).upload(path, proofFile, { upsert: false });
+    if (upErr) throw upErr;
+    proofPath = path;
+  }
+
+  const { error } = await supabase.from("recurring_bill_payments").upsert(
+    {
+      bill_id: billId,
+      profile_id: personId,
+      period,
+      status: "paid",
+      method,
+      proof_path: proofPath,
+      amount_cents: toCents(amount),
+      paid_at: new Date().toISOString()
+    },
+    { onConflict: "bill_id,profile_id,period" }
+  );
+  if (error) throw error;
+}
+
+/** Deshace el pago de mi parte para el mes dado. */
+export async function unmarkRecurringPaid(
+  billId: string,
+  personId: string,
+  period: string
+): Promise<void> {
+  const supabase = getSupabase();
+  const { error } = await supabase
+    .from("recurring_bill_payments")
+    .delete()
+    .eq("bill_id", billId)
+    .eq("profile_id", personId)
+    .eq("period", period);
+  if (error) throw error;
 }
 
 // ---------------------------------------------------------------------------

@@ -56,19 +56,26 @@ import { Household, Person } from "../lib/household";
 import { BrandGlyph } from "./BrandGlyph";
 import {
   createExpense as apiCreateExpense,
+  createRecurringBill as apiCreateRecurringBill,
   createRotation as apiCreateRotation,
   createSlot as apiCreateSlot,
   completeRotation as apiCompleteRotation,
+  currentPeriod,
   deleteExpense as apiDeleteExpense,
+  deleteRecurringBill as apiDeleteRecurringBill,
   deleteRotation as apiDeleteRotation,
   deleteSlot as apiDeleteSlot,
   displayTime,
   fetchExpenses,
   fetchNotifications,
+  fetchRecurringBills,
   fetchRotations,
   fetchSettlements,
   fetchSlots,
+  markRecurringPaid as apiMarkRecurringPaid,
   markSharePaid,
+  unmarkRecurringPaid as apiUnmarkRecurringPaid,
+  updateRecurringBill as apiUpdateRecurringBill,
   payExpenseForEveryone as apiPayExpenseForEveryone,
   registerPushNotifications,
   setShareStatus,
@@ -82,12 +89,14 @@ import {
   updateSlot as apiUpdateSlot,
   type Expense,
   type NewExpenseInput,
+  type NewRecurringBillInput,
   type NewRotationInput,
   type NewSlotInput,
   type NotificationDelivery,
   type PaymentMethod,
   type PaymentStatus,
   type PushRegistrationResult,
+  type RecurringBill,
   type Rotation,
   type RotationIcon,
   type ScheduleSlot,
@@ -170,6 +179,7 @@ function notificationKindLabel(kind: NotificationDelivery["kind"]) {
   if (kind === "expense_due") return "Pago pendiente";
   if (kind === "payment_confirmation") return "Por confirmar";
   if (kind === "task_turn") return "Turno";
+  if (kind === "recurring_due") return "Pago mensual";
   return "Horario";
 }
 
@@ -1558,23 +1568,431 @@ function ExpenseDetail({
   );
 }
 
+// ---------------------------------------------------------------------------
+// PAGOS MENSUALES EN CONJUNTO (renta, etc.)
+// ---------------------------------------------------------------------------
+/** Estado del vencimiento del mes en curso para mostrar en la tarjeta. */
+function recurringDueStatus(dueDay: number): { daysLeft: number; label: string; tone: "soon" | "today" | "overdue" } {
+  const now = new Date();
+  const due = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), Math.min(dueDay, 28));
+  const todayUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const daysLeft = Math.round((due - todayUtc) / 86_400_000);
+  if (daysLeft < 0) return { daysLeft, label: `Vencida hace ${-daysLeft} día${-daysLeft === 1 ? "" : "s"}`, tone: "overdue" };
+  if (daysLeft === 0) return { daysLeft, label: "Vence hoy", tone: "today" };
+  if (daysLeft === 1) return { daysLeft, label: "Vence mañana", tone: "today" };
+  return { daysLeft, label: `Faltan ${daysLeft} días`, tone: "soon" };
+}
+
+function RecurringPayForm({
+  bill,
+  amount,
+  onClose,
+  onSubmit
+}: {
+  bill: RecurringBill;
+  amount: number;
+  onClose: () => void;
+  onSubmit: (method: PaymentMethod, proofFile: File | null) => Promise<void>;
+}) {
+  const [method, setMethod] = useState<PaymentMethod>("transfer");
+  const [proofFile, setProofFile] = useState<File | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit() {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await onSubmit(method, proofFile);
+      onClose();
+    } catch {
+      setError("No se pudo guardar. Intenta de nuevo.");
+      setBusy(false);
+    }
+  }
+
+  return (
+    <ModalBackdrop onClose={onClose}>
+      <div className="modal-sheet">
+        <div className="modal-header">
+          <div>
+            <p className="eyebrow">Pago mensual</p>
+            <h2>Pagar mi parte de {bill.title}</h2>
+          </div>
+          <button className="icon-button" onClick={onClose} type="button" aria-label="Cerrar">
+            <X size={20} />
+          </button>
+        </div>
+        <p className="recurring-pay-amount">
+          Tu parte de este mes: <strong>{money(amount)}</strong>
+        </p>
+        <div className="split-toolbar">
+          <span>¿Cómo pagaste?</span>
+          <div className="segmented">
+            <button className={method === "transfer" ? "active" : ""} onClick={() => setMethod("transfer")} type="button">
+              Transferencia
+            </button>
+            <button className={method === "cash" ? "active" : ""} onClick={() => setMethod("cash")} type="button">
+              Efectivo
+            </button>
+            <button className={method === "other" ? "active" : ""} onClick={() => setMethod("other")} type="button">
+              Otro
+            </button>
+          </div>
+        </div>
+        <PhotoPicker file={proofFile} onPick={setProofFile} label="Adjuntar comprobante (opcional)" />
+        {error ? <div className="auth-alert error">{error}</div> : null}
+        <button className="primary-action full" disabled={busy} onClick={submit} type="button">
+          <Check size={19} />
+          {busy ? "Guardando…" : "Marcar mi parte como pagada"}
+        </button>
+      </div>
+    </ModalBackdrop>
+  );
+}
+
+function RecurringBillForm({
+  initial,
+  onClose,
+  onSubmit
+}: {
+  initial?: RecurringBill | null;
+  onClose: () => void;
+  onSubmit: (input: NewRecurringBillInput) => Promise<void>;
+}) {
+  const { people } = useApp();
+  const isEdit = !!initial;
+  const initialShares = initial ? Object.fromEntries(initial.shares.map((s) => [s.personId, s.amount])) : null;
+  const initialTotal = initial ? initial.shares.reduce((sum, s) => sum + s.amount, 0) : 0;
+
+  const [title, setTitle] = useState(initial?.title ?? "Renta");
+  const [dueDay, setDueDay] = useState(String(initial?.dueDay ?? 5));
+  const [amount, setAmount] = useState(initial ? String(initialTotal) : "");
+  const [splitMode, setSplitMode] = useState<SplitMode>(() => {
+    if (!initial || !initial.shares.length) return "equal";
+    const amts = initial.shares.map((s) => s.amount);
+    return amts.every((a) => Math.abs(a - amts[0]) < 0.01) ? "equal" : "custom";
+  });
+  const [selected, setSelected] = useState<Record<string, boolean>>(() =>
+    Object.fromEntries(people.map((p) => [p.id, initialShares ? p.id in initialShares : true]))
+  );
+  const [customAmounts, setCustomAmounts] = useState<Record<string, string>>(() =>
+    Object.fromEntries(
+      people.map((p) => [p.id, initialShares && p.id in initialShares ? String(initialShares[p.id]) : ""])
+    )
+  );
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const selectedPeople = people.filter((person) => selected[person.id]);
+  const total = parseMoney(amount);
+  const evenAmounts = selectedPeople.length ? splitEvenly(total, selectedPeople.length) : [];
+  const customTotal = selectedPeople.reduce((sum, person) => sum + parseMoney(customAmounts[person.id] || "0"), 0);
+  const customDifference = total - customTotal;
+  const validCustom = splitMode === "equal" || Math.abs(customDifference) < 0.01;
+  const dayNum = Math.min(28, Math.max(1, Math.round(Number(dueDay) || 1)));
+  const canSubmit = Boolean(title.trim() && total > 0 && selectedPeople.length > 0 && validCustom);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!canSubmit || saving) return;
+    setSaving(true);
+    setError(null);
+    const participants = selectedPeople.map((person, index) => ({
+      personId: person.id,
+      amount: splitMode === "equal" ? evenAmounts[index] : parseMoney(customAmounts[person.id] || "0")
+    }));
+    try {
+      await onSubmit({ title: title.trim(), dueDay: dayNum, participants });
+      onClose();
+    } catch {
+      setError("No se pudo guardar el pago mensual. Intenta de nuevo.");
+      setSaving(false);
+    }
+  }
+
+  return (
+    <ModalBackdrop>
+      <form className="modal-sheet expense-form" onSubmit={submit}>
+        <div className="modal-header">
+          <div>
+            <p className="eyebrow">{isEdit ? "Editar" : "Nuevo pago mensual"}</p>
+            <h2>{isEdit ? "Editar pago mensual" : "Agregar un pago mensual"}</h2>
+          </div>
+          <button className="icon-button" onClick={onClose} type="button" aria-label="Cerrar">
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="form-grid two">
+          <label>
+            <span>¿Qué se paga?</span>
+            <input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Ej: Renta" />
+          </label>
+          <label>
+            <span>Se paga antes del día</span>
+            <input
+              inputMode="numeric"
+              type="number"
+              min={1}
+              max={28}
+              value={dueDay}
+              onChange={(event) => setDueDay(event.target.value)}
+            />
+          </label>
+          <label>
+            <span>Total mensual</span>
+            <input inputMode="decimal" placeholder="0.00" value={amount} onChange={(event) => setAmount(event.target.value)} />
+          </label>
+        </div>
+
+        <div className="split-toolbar">
+          <span>Dividir</span>
+          <div className="segmented">
+            <button className={splitMode === "equal" ? "active" : ""} onClick={() => setSplitMode("equal")} type="button">
+              Igual
+            </button>
+            <button className={splitMode === "custom" ? "active" : ""} onClick={() => setSplitMode("custom")} type="button">
+              Personalizado
+            </button>
+          </div>
+        </div>
+
+        <div className="split-toolbar people-scope">
+          <span>Quiénes pagan</span>
+          <button
+            className="tiny-button"
+            onClick={() => setSelected(Object.fromEntries(people.map((person) => [person.id, true])))}
+            type="button"
+          >
+            Todos
+          </button>
+        </div>
+
+        <div className="people-picker">
+          {people.map((person) => {
+            const isSelected = selected[person.id];
+            return (
+              <div className={`share-row ${isSelected ? "selected" : ""}`} key={person.id}>
+                <button
+                  className="check-person"
+                  onClick={() => setSelected((current) => ({ ...current, [person.id]: !current[person.id] }))}
+                  type="button"
+                >
+                  <Avatar person={person} size="sm" />
+                  <span>{person.name}</span>
+                  {isSelected ? <Check size={18} /> : null}
+                </button>
+                {splitMode === "custom" ? (
+                  <input
+                    aria-label={`Monto de ${person.name}`}
+                    disabled={!isSelected}
+                    inputMode="decimal"
+                    placeholder="0.00"
+                    value={customAmounts[person.id] ?? ""}
+                    onChange={(event) =>
+                      setCustomAmounts((current) => ({ ...current, [person.id]: event.target.value }))
+                    }
+                  />
+                ) : (
+                  <strong>{isSelected ? money(evenAmounts[selectedPeople.indexOf(person)] ?? 0) : money(0)}</strong>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {splitMode === "custom" ? (
+          <div className={`difference-note ${validCustom ? "ok" : ""}`}>
+            {validCustom
+              ? "La división personalizada cuadra con el total."
+              : `Faltan ${money(Math.abs(customDifference))} por cuadrar.`}
+          </div>
+        ) : null}
+
+        <p className="difference-note ok" style={{ marginTop: 0 }}>
+          Cada quien paga su parte por su cuenta. Les llegarán recordatorios antes del día {dayNum}.
+        </p>
+
+        {error ? <div className="auth-alert error">{error}</div> : null}
+
+        <button className="primary-action full" disabled={!canSubmit || saving} type="submit">
+          <Plus size={19} />
+          {saving ? "Guardando…" : isEdit ? "Guardar cambios" : "Crear pago mensual"}
+        </button>
+      </form>
+    </ModalBackdrop>
+  );
+}
+
+function RecurringBillCard({
+  bill,
+  period,
+  onMarkPaid,
+  onUnmark,
+  onEdit,
+  onDelete
+}: {
+  bill: RecurringBill;
+  period: string;
+  onMarkPaid: (bill: RecurringBill, amount: number, method: PaymentMethod, proofFile: File | null) => Promise<void>;
+  onUnmark: (bill: RecurringBill) => Promise<void>;
+  onEdit: (bill: RecurringBill) => void;
+  onDelete: (bill: RecurringBill) => Promise<void>;
+}) {
+  const { people, getPerson, currentUserId } = useApp();
+  const [showActions, setShowActions] = useState(false);
+  const [showPay, setShowPay] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const isAdmin = getPerson(currentUserId).role === "admin";
+  const canManage = bill.createdBy === currentUserId || isAdmin;
+  const longPress = useLongPress(() => {
+    if (canManage) setShowActions(true);
+  });
+
+  const participants = bill.shares.filter((s) => people.some((p) => p.id === s.personId));
+  const myShare = bill.shares.find((s) => s.personId === currentUserId);
+  const paidThisMonth = new Set(bill.payments.filter((p) => p.period === period).map((p) => p.personId));
+  const paidCount = participants.filter((s) => paidThisMonth.has(s.personId)).length;
+  const iPaid = paidThisMonth.has(currentUserId);
+  const total = bill.shares.reduce((sum, s) => sum + s.amount, 0);
+  const status = recurringDueStatus(bill.dueDay);
+
+  async function run(action: () => Promise<void>) {
+    setBusy(true);
+    setError(null);
+    try {
+      await action();
+    } catch {
+      setError("No se pudo. Intenta de nuevo.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <article className="recurring-card" {...longPress}>
+      <div className="recurring-top">
+        <IconBubble icon={CalendarDays} tone="sky" />
+        <div className="recurring-title">
+          <strong>{bill.title}</strong>
+          <span>{money(total)} al mes · día {bill.dueDay}</span>
+        </div>
+        {canManage ? (
+          <button className="more-button" onClick={() => setShowActions(true)} type="button" aria-label="Opciones del pago">
+            <MoreVertical size={18} />
+          </button>
+        ) : null}
+      </div>
+
+      {!iPaid ? <span className={`recurring-due-chip ${status.tone}`}>{status.label}</span> : null}
+
+      <div className="recurring-people">
+        {participants.map((s) => {
+          const person = getPerson(s.personId);
+          const done = paidThisMonth.has(s.personId);
+          return (
+            <span className={`recurring-person ${done ? "paid" : ""}`} key={s.personId} title={`${person.shortName}: ${done ? "pagó" : "pendiente"}`}>
+              <Avatar person={person} size="sm" />
+              {done ? <Check size={13} className="recurring-person-check" /> : null}
+            </span>
+          );
+        })}
+        <small className="recurring-count">{paidCount}/{participants.length} pagaron este mes</small>
+      </div>
+
+      {myShare ? (
+        iPaid ? (
+          <>
+            <div className="recurring-paid-banner">
+              <CheckCircle2 size={18} />
+              Pagaste tu parte ({money(myShare.amount)}) este mes
+            </div>
+            <button className="undo-link" disabled={busy} onClick={() => run(() => onUnmark(bill))} type="button">
+              <Undo2 size={15} />
+              Deshacer mi pago
+            </button>
+          </>
+        ) : (
+          <button className="primary-action full" disabled={busy} onClick={() => setShowPay(true)} type="button">
+            <HandCoins size={19} />
+            Pagar mi parte ({money(myShare.amount)})
+          </button>
+        )
+      ) : (
+        <div className="recurring-paid-banner muted">No participas en este pago.</div>
+      )}
+
+      {error ? <div className="auth-alert error">{error}</div> : null}
+
+      {showPay && myShare ? (
+        <RecurringPayForm
+          bill={bill}
+          amount={myShare.amount}
+          onClose={() => setShowPay(false)}
+          onSubmit={(method, proofFile) => onMarkPaid(bill, myShare.amount, method, proofFile)}
+        />
+      ) : null}
+
+      {showActions ? (
+        <ItemActionsSheet
+          eyebrow="Pago mensual"
+          title={bill.title}
+          onClose={() => setShowActions(false)}
+          onEdit={() => {
+            setShowActions(false);
+            onEdit(bill);
+          }}
+          onDelete={() => onDelete(bill)}
+        />
+      ) : null}
+    </article>
+  );
+}
+
 function ExpensesView({
   currentUser,
   expenses,
+  recurringBills,
+  tab,
+  setTab,
   onCreate,
   onOpenBalance,
+  onCreateBill,
+  onEditBill,
+  onDeleteBill,
+  onMarkBillPaid,
+  onUnmarkBill,
   setActiveExpenseId
 }: {
   currentUser: Person;
   expenses: Expense[];
+  recurringBills: RecurringBill[];
+  tab: "expenses" | "balances" | "monthly";
+  setTab: (tab: "expenses" | "balances" | "monthly") => void;
   onCreate: (input: NewExpenseInput) => Promise<void>;
   onOpenBalance: (person: Person) => void;
+  onCreateBill: (input: NewRecurringBillInput) => Promise<void>;
+  onEditBill: (billId: string, input: NewRecurringBillInput) => Promise<void>;
+  onDeleteBill: (bill: RecurringBill) => Promise<void>;
+  onMarkBillPaid: (bill: RecurringBill, amount: number, method: PaymentMethod, proofFile: File | null) => Promise<void>;
+  onUnmarkBill: (bill: RecurringBill) => Promise<void>;
   setActiveExpenseId: (id: string) => void;
 }) {
   const { people, currentUserId } = useApp();
-  const [tab, setTab] = useState<"expenses" | "balances">("expenses");
   const [showForm, setShowForm] = useState(false);
+  const [showBillForm, setShowBillForm] = useState(false);
+  const [editingBill, setEditingBill] = useState<RecurringBill | null>(null);
   const others = people.filter((p) => p.id !== currentUserId);
+  const period = currentPeriod();
+  const iOweMonthly = recurringBills.some(
+    (bill) =>
+      bill.shares.some((s) => s.personId === currentUserId) &&
+      !bill.payments.some((p) => p.period === period && p.personId === currentUserId)
+  );
 
   const myTotals = useMemo(() => {
     let owe = 0;
@@ -1590,13 +2008,17 @@ function ExpensesView({
   return (
     <section className="view-stack">
       <div className="view-head">
-        <h1 className="view-title">Gastos y saldos</h1>
+        <h1 className="view-title">Gastos y pagos</h1>
         <div className="subtabs">
           <button className={tab === "expenses" ? "active" : ""} onClick={() => setTab("expenses")} type="button">
             Gastos
           </button>
           <button className={tab === "balances" ? "active" : ""} onClick={() => setTab("balances")} type="button">
             Saldos
+          </button>
+          <button className={tab === "monthly" ? "active" : ""} onClick={() => setTab("monthly")} type="button">
+            Mensual
+            {iOweMonthly ? <span className="subtab-dot" aria-hidden /> : null}
           </button>
         </div>
       </div>
@@ -1621,7 +2043,7 @@ function ExpensesView({
             </div>
           )}
         </>
-      ) : (
+      ) : tab === "balances" ? (
         <>
           <div className="balance-summary">
             <div className="balance-summary-cell">
@@ -1664,10 +2086,48 @@ function ExpensesView({
             </div>
           )}
         </>
+      ) : (
+        <>
+          <button className="primary-action full" onClick={() => setShowBillForm(true)} type="button">
+            <Plus size={19} />
+            Agregar pago mensual
+          </button>
+          {recurringBills.length ? (
+            <div className="recurring-list">
+              {recurringBills.map((bill) => (
+                <RecurringBillCard
+                  bill={bill}
+                  key={bill.id}
+                  period={period}
+                  onMarkPaid={onMarkBillPaid}
+                  onUnmark={onUnmarkBill}
+                  onEdit={setEditingBill}
+                  onDelete={onDeleteBill}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="empty-state">
+              <CalendarDays size={28} />
+              <strong>Aún no hay pagos mensuales</strong>
+              <span>Agrega la renta u otro pago fijo. Cada quien paga su parte y recibe recordatorios.</span>
+            </div>
+          )}
+        </>
       )}
 
       {showForm ? (
         <ExpenseForm currentUser={currentUser} onClose={() => setShowForm(false)} onSubmit={onCreate} />
+      ) : null}
+      {showBillForm ? (
+        <RecurringBillForm onClose={() => setShowBillForm(false)} onSubmit={onCreateBill} />
+      ) : null}
+      {editingBill ? (
+        <RecurringBillForm
+          initial={editingBill}
+          onClose={() => setEditingBill(null)}
+          onSubmit={(input) => onEditBill(editingBill.id, input)}
+        />
       ) : null}
     </section>
   );
@@ -2801,7 +3261,9 @@ export function NestLoopApp({
   onSignOut: () => void;
 }) {
   const [activeView, setActiveView] = useState<View>("home");
+  const [expensesTab, setExpensesTab] = useState<"expenses" | "balances" | "monthly">("expenses");
   const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [recurringBills, setRecurringBills] = useState<RecurringBill[]>([]);
   const [rotations, setRotations] = useState<Rotation[]>([]);
   const [slots, setSlots] = useState<ScheduleSlot[]>([]);
   const [activeExpenseId, setActiveExpenseId] = useState<string | null>(null);
@@ -2824,6 +3286,9 @@ export function NestLoopApp({
   const reloadExpenses = useCallback(async () => {
     setExpenses(await fetchExpenses(hid));
   }, [hid]);
+  const reloadRecurringBills = useCallback(async () => {
+    setRecurringBills(await fetchRecurringBills(hid));
+  }, [hid]);
   const reloadRotations = useCallback(async () => {
     setRotations(await fetchRotations(hid));
   }, [hid]);
@@ -2837,13 +3302,15 @@ export function NestLoopApp({
   // Recarga silenciosa de todo (sin spinner): para refresco en vivo.
   const reloadAll = useCallback(async () => {
     try {
-      const [e, r, s, n] = await Promise.all([
+      const [e, b, r, s, n] = await Promise.all([
         fetchExpenses(hid),
+        fetchRecurringBills(hid),
         fetchRotations(hid),
         fetchSlots(hid),
         fetchNotifications(hid)
       ]);
       setExpenses(e);
+      setRecurringBills(b);
       setRotations(r);
       setSlots(s);
       setNotifications(n);
@@ -2856,10 +3323,17 @@ export function NestLoopApp({
     let on = true;
     setLoading(true);
     setLoadError(false);
-    Promise.all([fetchExpenses(hid), fetchRotations(hid), fetchSlots(hid), fetchNotifications(hid)])
-      .then(([e, r, s, n]) => {
+    Promise.all([
+      fetchExpenses(hid),
+      fetchRecurringBills(hid),
+      fetchRotations(hid),
+      fetchSlots(hid),
+      fetchNotifications(hid)
+    ])
+      .then(([e, b, r, s, n]) => {
         if (!on) return;
         setExpenses(e);
+        setRecurringBills(b);
         setRotations(r);
         setSlots(s);
         setNotifications(n);
@@ -2973,6 +3447,10 @@ export function NestLoopApp({
   function handleSelectNotification(notification: NotificationDelivery) {
     rememberNotificationsSeen([notification.id]);
     if (notification.kind === "expense_due" || notification.kind === "payment_confirmation") {
+      setExpensesTab("expenses");
+      setActiveView("expenses");
+    } else if (notification.kind === "recurring_due") {
+      setExpensesTab("monthly");
       setActiveView("expenses");
     } else if (notification.kind === "task_turn") {
       setActiveView("tasks");
@@ -3087,6 +3565,41 @@ export function NestLoopApp({
     await reloadNotifications().catch(() => {});
   }
 
+  // Pagos mensuales en conjunto (renta, etc.)
+  async function handleCreateRecurringBill(input: NewRecurringBillInput) {
+    await apiCreateRecurringBill(hid, currentUserId, input);
+    await reloadRecurringBills();
+    await reloadNotifications().catch(() => {});
+    void triggerPushDispatch();
+  }
+  async function handleUpdateRecurringBill(billId: string, input: NewRecurringBillInput) {
+    await apiUpdateRecurringBill(billId, input);
+    await reloadRecurringBills();
+    await reloadNotifications().catch(() => {});
+    void triggerPushDispatch();
+  }
+  async function handleDeleteRecurringBill(bill: RecurringBill) {
+    await apiDeleteRecurringBill(bill.id);
+    await reloadRecurringBills();
+    await reloadNotifications().catch(() => {});
+  }
+  async function handleMarkRecurringPaid(
+    bill: RecurringBill,
+    amount: number,
+    method: PaymentMethod,
+    proofFile: File | null
+  ) {
+    await apiMarkRecurringPaid(hid, bill.id, currentUserId, currentPeriod(), amount, method, proofFile);
+    await reloadRecurringBills();
+    await reloadNotifications().catch(() => {});
+    void triggerPushDispatch();
+  }
+  async function handleUnmarkRecurringPaid(bill: RecurringBill) {
+    await apiUnmarkRecurringPaid(bill.id, currentUserId, currentPeriod());
+    await reloadRecurringBills();
+    await reloadNotifications().catch(() => {});
+  }
+
   return (
     <AppDataContext.Provider value={appData}>
       <main className="app-shell">
@@ -3130,8 +3643,16 @@ export function NestLoopApp({
                 <ExpensesView
                   currentUser={currentUser}
                   expenses={expenses}
+                  recurringBills={recurringBills}
+                  tab={expensesTab}
+                  setTab={setExpensesTab}
                   onCreate={handleCreateExpense}
                   onOpenBalance={setBalancePerson}
+                  onCreateBill={handleCreateRecurringBill}
+                  onEditBill={handleUpdateRecurringBill}
+                  onDeleteBill={handleDeleteRecurringBill}
+                  onMarkBillPaid={handleMarkRecurringPaid}
+                  onUnmarkBill={handleUnmarkRecurringPaid}
                   setActiveExpenseId={setActiveExpenseId}
                 />
               ) : null}
