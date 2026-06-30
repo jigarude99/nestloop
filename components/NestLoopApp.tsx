@@ -1327,6 +1327,8 @@ function ExpenseDetail({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [viewingReceipt, setViewingReceipt] = useState(false);
   const receiptHistoryPushedRef = useRef(false);
+  const [viewingProof, setViewingProof] = useState<{ path: string; person: string } | null>(null);
+  const proofHistoryPushedRef = useRef(false);
 
   const payer = getPerson(expense.paidBy);
   const currentShare = expense.shares.find((share) => share.personId === currentUser.id);
@@ -1376,6 +1378,33 @@ function ExpenseDetail({
     }
     receiptHistoryPushedRef.current = false;
     setViewingReceipt(false);
+  }
+
+  useEffect(() => {
+    if (!viewingProof) return;
+    const closeFromBack = () => {
+      proofHistoryPushedRef.current = false;
+      setViewingProof(null);
+    };
+    window.addEventListener("popstate", closeFromBack);
+    return () => window.removeEventListener("popstate", closeFromBack);
+  }, [viewingProof]);
+
+  function openProofViewer(path: string, person: string) {
+    setViewingProof({ path, person });
+    if (!proofHistoryPushedRef.current) {
+      window.history.pushState({ nestloopProofViewer: expense.id }, "", window.location.href);
+      proofHistoryPushedRef.current = true;
+    }
+  }
+
+  function closeProofViewer() {
+    if (proofHistoryPushedRef.current && window.history.state?.nestloopProofViewer === expense.id) {
+      window.history.back();
+      return;
+    }
+    proofHistoryPushedRef.current = false;
+    setViewingProof(null);
   }
 
   async function run(action: () => Promise<void>) {
@@ -1451,7 +1480,18 @@ function ExpenseDetail({
                   <Avatar person={person} size="sm" />
                   <span>
                     <strong>{person.name}</strong>
-                    <small>{share.proofName ?? methodLabel(share.paymentMethod) ?? "Sin comprobante"}</small>
+                    {share.proofPath ? (
+                      <button
+                        className="proof-link"
+                        type="button"
+                        onClick={() => openProofViewer(share.proofPath!, person.name)}
+                      >
+                        <ImageIcon size={13} />
+                        Ver comprobante
+                      </button>
+                    ) : (
+                      <small>{methodLabel(share.paymentMethod) ?? "Sin comprobante"}</small>
+                    )}
                   </span>
                 </div>
                 <strong>{money(share.amount)}</strong>
@@ -1603,6 +1643,23 @@ function ExpenseDetail({
               </button>
             </div>
             <SignedImage bucket="receipts" path={expense.receiptPath} alt={`Factura de ${expense.title}`} />
+          </div>
+        </ModalBackdrop>
+      ) : null}
+
+      {viewingProof ? (
+        <ModalBackdrop onClose={closeProofViewer}>
+          <div className="modal-sheet photo-sheet receipt-full-sheet">
+            <div className="modal-header">
+              <div>
+                <p className="eyebrow">Comprobante de pago</p>
+                <h2>{viewingProof.person}</h2>
+              </div>
+              <button className="icon-button" onClick={closeProofViewer} type="button" aria-label="Volver al gasto">
+                <X size={20} />
+              </button>
+            </div>
+            <SignedImage bucket="payment-proofs" path={viewingProof.path} alt={`Comprobante de ${viewingProof.person}`} />
           </div>
         </ModalBackdrop>
       ) : null}
