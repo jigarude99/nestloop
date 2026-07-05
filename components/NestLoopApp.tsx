@@ -384,6 +384,163 @@ function SignedImage({
   return <img className="receipt-img" src={url} alt={alt} />;
 }
 
+/**
+ * Visor de foto con zoom: pellizcar (dos dedos), doble toque / doble clic,
+ * arrastrar cuando está acercada y rueda del ratón. Sin dependencias.
+ */
+function ZoomableImage({
+  bucket,
+  path,
+  alt
+}: {
+  bucket: "receipts" | "payment-proofs";
+  path: string;
+  alt: string;
+}) {
+  const [url, setUrl] = useState<string | null>(null);
+  const stageRef = useRef<HTMLDivElement>(null);
+  const imgRef = useRef<HTMLImageElement>(null);
+  const [zoomed, setZoomed] = useState(false);
+  const st = useRef({
+    scale: 1,
+    tx: 0,
+    ty: 0,
+    pts: new Map<number, { x: number; y: number }>(),
+    startDist: 0,
+    startScale: 1,
+    panX: 0,
+    panY: 0,
+    startTx: 0,
+    startTy: 0,
+    lastTap: 0,
+    moved: false
+  });
+
+  useEffect(() => {
+    let on = true;
+    signedUrl(bucket, path).then((u) => {
+      if (on) setUrl(u);
+    });
+    return () => {
+      on = false;
+    };
+  }, [bucket, path]);
+
+  const apply = useCallback(() => {
+    const s = st.current;
+    // Al 100% vuelve al centro; acercada, limita el arrastre al borde de la foto.
+    s.scale = Math.min(5, Math.max(1, s.scale));
+    const stage = stageRef.current;
+    if (stage) {
+      const maxX = ((s.scale - 1) * stage.clientWidth) / 2;
+      const maxY = ((s.scale - 1) * stage.clientHeight) / 2;
+      s.tx = Math.min(maxX, Math.max(-maxX, s.tx));
+      s.ty = Math.min(maxY, Math.max(-maxY, s.ty));
+    }
+    if (s.scale === 1) {
+      s.tx = 0;
+      s.ty = 0;
+    }
+    const img = imgRef.current;
+    if (img) img.style.transform = `translate(${s.tx}px, ${s.ty}px) scale(${s.scale})`;
+    setZoomed(s.scale > 1.02);
+  }, []);
+
+  const zoomAt = useCallback(
+    (clientX: number, clientY: number, nextScale: number) => {
+      const s = st.current;
+      const stage = stageRef.current;
+      if (!stage) return;
+      const rect = stage.getBoundingClientRect();
+      const px = clientX - rect.left - rect.width / 2;
+      const py = clientY - rect.top - rect.height / 2;
+      const clamped = Math.min(5, Math.max(1, nextScale));
+      const ratio = clamped / s.scale;
+      s.tx = px - (px - s.tx) * ratio;
+      s.ty = py - (py - s.ty) * ratio;
+      s.scale = clamped;
+      apply();
+    },
+    [apply]
+  );
+
+  function onPointerDown(e: React.PointerEvent) {
+    const s = st.current;
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    s.pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    s.moved = false;
+    if (s.pts.size === 2) {
+      const [a, b] = [...s.pts.values()];
+      s.startDist = Math.hypot(a.x - b.x, a.y - b.y);
+      s.startScale = s.scale;
+    } else if (s.pts.size === 1) {
+      s.panX = e.clientX;
+      s.panY = e.clientY;
+      s.startTx = s.tx;
+      s.startTy = s.ty;
+    }
+  }
+
+  function onPointerMove(e: React.PointerEvent) {
+    const s = st.current;
+    if (!s.pts.has(e.pointerId)) return;
+    const prev = s.pts.get(e.pointerId)!;
+    if (Math.hypot(e.clientX - prev.x, e.clientY - prev.y) > 6) s.moved = true;
+    s.pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    if (s.pts.size === 2) {
+      const [a, b] = [...s.pts.values()];
+      const dist = Math.hypot(a.x - b.x, a.y - b.y);
+      if (s.startDist > 0) {
+        zoomAt((a.x + b.x) / 2, (a.y + b.y) / 2, s.startScale * (dist / s.startDist));
+      }
+    } else if (s.pts.size === 1 && s.scale > 1) {
+      s.tx = s.startTx + (e.clientX - s.panX);
+      s.ty = s.startTy + (e.clientY - s.panY);
+      apply();
+    }
+  }
+
+  function onPointerUp(e: React.PointerEvent) {
+    const s = st.current;
+    s.pts.delete(e.pointerId);
+    if (s.pts.size === 1) {
+      // Quedó un dedo tras el pellizco: re-ancla el arrastre.
+      const [p] = [...s.pts.values()];
+      s.panX = p.x;
+      s.panY = p.y;
+      s.startTx = s.tx;
+      s.startTy = s.ty;
+    }
+    if (s.pts.size === 0 && !s.moved && e.pointerType === "touch") {
+      const now = Date.now();
+      if (now - s.lastTap < 320) {
+        zoomAt(e.clientX, e.clientY, s.scale > 1.02 ? 1 : 2.5);
+        s.lastTap = 0;
+      } else {
+        s.lastTap = now;
+      }
+    }
+  }
+
+  if (!url) return null;
+  return (
+    <div
+      className={`zoom-stage ${zoomed ? "zoomed" : ""}`}
+      ref={stageRef}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerUp}
+      onDoubleClick={(e) => zoomAt(e.clientX, e.clientY, st.current.scale > 1.02 ? 1 : 2.5)}
+      onWheel={(e) => zoomAt(e.clientX, e.clientY, st.current.scale * (e.deltaY < 0 ? 1.18 : 0.85))}
+    >
+      <img ref={imgRef} src={url} alt={alt} draggable={false} />
+      {!zoomed ? <span className="zoom-hint">Pellizca o toca 2 veces para acercar</span> : null}
+    </div>
+  );
+}
+
 /** Selector de foto con dos opciones claras: tomar con la cámara o elegir de galería. */
 function PhotoPicker({
   file,
@@ -847,7 +1004,10 @@ function HomeView({
       const period = billActivePeriod(bill);
       const iPaid = bill.payments.some((p) => p.period === period && p.personId === currentUser.id);
       if (iPaid) return [];
-      const daysLeft = Math.round((periodDueDate(period, bill.dueDay).getTime() - Date.now()) / 86_400_000);
+      // Días completos desde la medianoche de hoy (igual que la tarjeta de Mensual)
+      const now = new Date();
+      const todayUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+      const daysLeft = Math.round((periodDueDate(period, bill.dueDay).getTime() - todayUtc) / 86_400_000);
       if (daysLeft > 7) return [];
       return [{ bill, amount: myShare.amount, period, daysLeft }];
     })
@@ -1643,7 +1803,7 @@ function ExpenseDetail({
                 <X size={20} />
               </button>
             </div>
-            <SignedImage bucket="receipts" path={expense.receiptPath} alt={`Factura de ${expense.title}`} />
+            <ZoomableImage bucket="receipts" path={expense.receiptPath} alt={`Factura de ${expense.title}`} />
           </div>
         </ModalBackdrop>
       ) : null}
@@ -1660,7 +1820,7 @@ function ExpenseDetail({
                 <X size={20} />
               </button>
             </div>
-            <SignedImage bucket="payment-proofs" path={viewingProof.path} alt={`Comprobante de ${viewingProof.person}`} />
+            <ZoomableImage bucket="payment-proofs" path={viewingProof.path} alt={`Comprobante de ${viewingProof.person}`} />
           </div>
         </ModalBackdrop>
       ) : null}
@@ -2099,9 +2259,9 @@ function ExpensesView({
     const period = billActivePeriod(bill);
     const iPaid = bill.payments.some((p) => p.period === period && p.personId === currentUserId);
     if (iPaid) return false;
-    const daysLeft = Math.round(
-      (periodDueDate(period, bill.dueDay).getTime() - Date.now()) / 86_400_000
-    );
+    const now = new Date();
+    const todayUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+    const daysLeft = Math.round((periodDueDate(period, bill.dueDay).getTime() - todayUtc) / 86_400_000);
     return daysLeft <= 7;
   });
 
@@ -3348,7 +3508,7 @@ function HistorySheet({
                 <X size={20} />
               </button>
             </div>
-            <SignedImage bucket={viewing.bucket} path={viewing.path} alt="Comprobante" />
+            <ZoomableImage bucket={viewing.bucket} path={viewing.path} alt="Comprobante" />
           </div>
         </ModalBackdrop>
       ) : null}
