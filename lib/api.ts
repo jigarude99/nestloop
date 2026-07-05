@@ -304,6 +304,76 @@ export async function registerPushNotifications(
   return "granted";
 }
 
+/**
+ * Auto-reparación del push al abrir la app (si ya hay permiso concedido).
+ * En Android/Chrome el canal de notificaciones caduca o rota con el tiempo;
+ * cuando Google responde "ya no existe" el servidor lo desactiva y, sin esto,
+ * el teléfono dejaba de recibir avisos para siempre hasta re-registrarse a mano.
+ * Aquí: si el servidor marcó el canal como muerto, pedimos uno nuevo y lo
+ * registramos; si no está registrado (o quedó a nombre de otro miembro que usó
+ * este teléfono), lo reclamamos para el usuario actual.
+ */
+export async function ensurePushSubscription(householdId: string): Promise<void> {
+  if (
+    typeof window === "undefined" ||
+    !("Notification" in window) ||
+    !("serviceWorker" in navigator) ||
+    !("PushManager" in window) ||
+    !VAPID_PUBLIC_KEY ||
+    Notification.permission !== "granted"
+  ) {
+    return;
+  }
+
+  const registration = await navigator.serviceWorker.ready;
+  let subscription = await registration.pushManager.getSubscription();
+  const supabase = getSupabase();
+
+  if (subscription) {
+    const { data } = await supabase
+      .from("push_subscriptions")
+      .select("enabled")
+      .eq("endpoint", subscription.endpoint)
+      .maybeSingle();
+
+    if (data?.enabled) {
+      // Canal sano y registrado a mi nombre: solo refrescar "último visto".
+      await supabase
+        .from("push_subscriptions")
+        .update({ last_seen_at: new Date().toISOString() })
+        .eq("endpoint", subscription.endpoint);
+      return;
+    }
+    if (data && !data.enabled) {
+      // El servidor lo dio por muerto (Google respondió que ya no existe):
+      // soltarlo y pedir un canal nuevo.
+      await subscription.unsubscribe().catch(() => {});
+      subscription = null;
+    }
+    // data == null: el canal no está registrado o es de otro miembro → registrar abajo.
+  }
+
+  if (!subscription) {
+    subscription = await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
+    });
+  }
+
+  const json = subscription.toJSON();
+  const { error } = await supabase.rpc("register_push_subscription", {
+    p_household_id: householdId,
+    p_endpoint: subscription.endpoint,
+    p_p256dh: json.keys?.p256dh,
+    p_auth: json.keys?.auth,
+    p_user_agent: navigator.userAgent
+  });
+  if (error) throw error;
+
+  // Limpieza: borrar mis canales muertos viejos (RLS limita a los míos).
+  await supabase.from("push_subscriptions").delete().eq("enabled", false);
+}
+
 export async function triggerPushDispatch(): Promise<void> {
   const supabase = getSupabase();
   const {

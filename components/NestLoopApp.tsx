@@ -80,6 +80,7 @@ import {
   unmarkRecurringPaid as apiUnmarkRecurringPaid,
   updateRecurringBill as apiUpdateRecurringBill,
   payExpenseForEveryone as apiPayExpenseForEveryone,
+  ensurePushSubscription,
   registerPushNotifications,
   setShareStatus,
   settleWith as apiSettleWith,
@@ -3482,6 +3483,16 @@ export function NestLoopApp({
     if (typeof window === "undefined" || !("Notification" in window)) return;
     setNotificationPermission(Notification.permission);
   }, []);
+
+  // Auto-reparación del push: en Android/Chrome el canal caduca con el tiempo
+  // y el teléfono deja de recibir avisos sin que nadie se entere. Al abrir la
+  // app (con permiso ya concedido) verificamos el canal y lo renovamos si hace
+  // falta, sin molestar al usuario.
+  useEffect(() => {
+    ensurePushSubscription(hid).catch(() => {
+      /* sin conexión o sin permiso: se reintenta en la próxima apertura */
+    });
+  }, [hid]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;

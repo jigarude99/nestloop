@@ -1,4 +1,14 @@
-const CACHE_NAME = "nestloop-v11";
+const CACHE_NAME = "nestloop-v12";
+// Clave pública VAPID (misma que usa la app; no es secreta).
+const VAPID_PUBLIC_KEY =
+  "BBntLEaWDQo3twD1_7gzHDqo7ladR0E1f7EN07aYcDsAqJLdjoxTPCHbn3OVwPMP9HosQWEJ0C5gCVNVH16IxZo";
+
+function urlBase64ToUint8Array(value) {
+  const padding = "=".repeat((4 - (value.length % 4)) % 4);
+  const base64 = (value + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const rawData = atob(base64);
+  return Uint8Array.from([...rawData].map((char) => char.charCodeAt(0)));
+}
 const APP_SHELL = [
   "/",
   "/manifest.json",
@@ -63,6 +73,22 @@ self.addEventListener("push", (event) => {
       renotify: true,
       data: { url: data.url || "/" }
     })
+  );
+});
+
+// Cuando el navegador rota/caduca el canal de push (típico en Android/Chrome),
+// pedimos uno nuevo de inmediato para no quedar sordos. La app lo registrará
+// en el servidor en la próxima apertura (ensurePushSubscription).
+self.addEventListener("pushsubscriptionchange", (event) => {
+  event.waitUntil(
+    self.registration.pushManager
+      .subscribe(
+        (event.oldSubscription && event.oldSubscription.options) || {
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
+        }
+      )
+      .catch(() => undefined)
   );
 });
 
