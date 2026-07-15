@@ -2993,7 +2993,7 @@ function CalendarView({
               type="button"
               role="tab"
               aria-selected={selected}
-              aria-label={`${DAYS_FULL[dayIndex]}${count ? `, ${count} horarios` : ", libre"}`}
+              aria-label={`${DAYS_FULL[dayIndex]}${count ? `, ${count} ${count === 1 ? "horario" : "horarios"}` : ", libre"}`}
             >
               <span>{day}</span>
               <small>{count || "·"}</small>

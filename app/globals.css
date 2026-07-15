@@ -4549,6 +4549,10 @@ body {
   letter-spacing: 0;
 }
 
+.modal-backdrop {
+  z-index: 120;
+}
+
 .auth-brand {
   margin-bottom: 22px;
 }
@@ -4615,5 +4619,15 @@ body {
   .auth-form .primary-action,
   .board-mode-link {
     min-height: 50px;
+  }
+}
+
+@media (max-width: 820px) {
+  .app-nav {
+    right: 0;
+    bottom: 0;
+    left: 0;
+    width: auto;
+    border-radius: 0;
   }
 }
