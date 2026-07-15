@@ -1,4 +1,4 @@
-const CACHE_NAME = "nestloop-v12";
+const CACHE_NAME = "nestloop-v13";
 // Clave pública VAPID (misma que usa la app; no es secreta).
 const VAPID_PUBLIC_KEY =
   "BBntLEaWDQo3twD1_7gzHDqo7ladR0E1f7EN07aYcDsAqJLdjoxTPCHbn3OVwPMP9HosQWEJ0C5gCVNVH16IxZo";
@@ -95,13 +95,17 @@ self.addEventListener("pushsubscriptionchange", (event) => {
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const targetUrl = event.notification.data?.url || "/";
+  const destination = new URL(targetUrl, self.location.origin).href;
   event.waitUntil(
     self.clients
       .matchAll({ type: "window", includeUncontrolled: true })
       .then((clients) => {
         const openClient = clients.find((client) => "focus" in client && client.url.includes(self.location.origin));
-        if (openClient) return openClient.focus();
-        if (self.clients.openWindow) return self.clients.openWindow(targetUrl);
+        if (openClient) {
+          const navigated = "navigate" in openClient ? openClient.navigate(destination) : Promise.resolve(openClient);
+          return navigated.then((client) => client?.focus());
+        }
+        if (self.clients.openWindow) return self.clients.openWindow(destination);
         return undefined;
       })
   );

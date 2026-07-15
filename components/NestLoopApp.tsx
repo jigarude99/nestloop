@@ -121,6 +121,7 @@ const NAV_ITEMS: NavItem[] = [
 ];
 
 const DAYS = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
+const DAYS_FULL = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"];
 const CATEGORIES = ["Comida", "Agua", "Casa", "Limpieza", "Reembolso", "Otro"];
 
 // ---------------------------------------------------------------------------
@@ -153,8 +154,10 @@ const PLACEHOLDER: Person = {
 // ---------------------------------------------------------------------------
 // Utilidades de formato
 // ---------------------------------------------------------------------------
+const moneyFormatter = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
+
 function money(value: number) {
-  return new Intl.NumberFormat("es", { style: "currency", currency: "USD" }).format(value);
+  return moneyFormatter.format(value);
 }
 
 function shortDate(value: string) {
@@ -203,7 +206,24 @@ function fromCents(value: number) {
   return value / 100;
 }
 function parseMoney(value: string) {
-  const parsed = Number(value.replace(/[^\d.]/g, ""));
+  const clean = value.trim().replace(/[^\d.,-]/g, "");
+  if (!clean) return 0;
+
+  const lastComma = clean.lastIndexOf(",");
+  const lastDot = clean.lastIndexOf(".");
+  const separatorIndex = Math.max(lastComma, lastDot);
+  const digitsAfterSeparator = separatorIndex >= 0 ? clean.length - separatorIndex - 1 : 0;
+  const shouldUseDecimal =
+    separatorIndex >= 0 &&
+    digitsAfterSeparator > 0 &&
+    (digitsAfterSeparator <= 2 || (lastComma >= 0 && lastDot >= 0));
+
+  const normalized = shouldUseDecimal
+    ? `${clean.slice(0, separatorIndex).replace(/[.,]/g, "")}.${clean
+        .slice(separatorIndex + 1)
+        .replace(/[.,]/g, "")}`
+    : clean.replace(/[.,]/g, "");
+  const parsed = Number(normalized);
   return Number.isFinite(parsed) ? parsed : 0;
 }
 function splitEvenly(total: number, count: number) {
@@ -248,54 +268,49 @@ function pairwiseBalance(expenses: Expense[], meId: string, otherId: string): Pa
   return { iOweItems, theyOweItems, iOwe, theyOwe, net: iOwe - theyOwe };
 }
 
-/** Mantener apretado (o clic derecho) para abrir el menú de acciones. */
-function useLongPress(onLongPress: () => void, ms = 500) {
-  const timer = useRef<number | null>(null);
-  const clear = () => {
-    if (timer.current) {
-      window.clearTimeout(timer.current);
-      timer.current = null;
-    }
-  };
-  return {
-    onPointerDown: () => {
-      clear();
-      timer.current = window.setTimeout(onLongPress, ms);
-    },
-    onPointerUp: clear,
-    onPointerLeave: clear,
-    onPointerCancel: clear,
-    onContextMenu: (e: React.MouseEvent) => {
-      e.preventDefault();
-      onLongPress();
-    }
-  };
-}
+type BodyLockSnapshot = {
+  position: string;
+  top: string;
+  left: string;
+  right: string;
+  overflow: string;
+};
+
+let bodyLockCount = 0;
+let bodyLockY = 0;
+let bodyLockSnapshot: BodyLockSnapshot | null = null;
 
 /** Bloquea el scroll del fondo mientras un modal está abierto (robusto en iOS). */
 function useBodyScrollLock() {
   useEffect(() => {
-    const y = window.scrollY;
     const { style } = document.body;
-    const prev = {
-      position: style.position,
-      top: style.top,
-      left: style.left,
-      right: style.right,
-      overflow: style.overflow
-    };
-    style.position = "fixed";
-    style.top = `-${y}px`;
-    style.left = "0";
-    style.right = "0";
-    style.overflow = "hidden";
+    if (bodyLockCount === 0) {
+      bodyLockY = window.scrollY;
+      bodyLockSnapshot = {
+        position: style.position,
+        top: style.top,
+        left: style.left,
+        right: style.right,
+        overflow: style.overflow
+      };
+      style.position = "fixed";
+      style.top = `-${bodyLockY}px`;
+      style.left = "0";
+      style.right = "0";
+      style.overflow = "hidden";
+    }
+    bodyLockCount += 1;
+
     return () => {
-      style.position = prev.position;
-      style.top = prev.top;
-      style.left = prev.left;
-      style.right = prev.right;
-      style.overflow = prev.overflow;
-      window.scrollTo(0, y);
+      bodyLockCount = Math.max(0, bodyLockCount - 1);
+      if (bodyLockCount !== 0 || !bodyLockSnapshot) return;
+      style.position = bodyLockSnapshot.position;
+      style.top = bodyLockSnapshot.top;
+      style.left = bodyLockSnapshot.left;
+      style.right = bodyLockSnapshot.right;
+      style.overflow = bodyLockSnapshot.overflow;
+      bodyLockSnapshot = null;
+      window.scrollTo(0, bodyLockY);
     };
   }, []);
 }
@@ -371,16 +386,24 @@ function SignedImage({
   alt: string;
 }) {
   const [url, setUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
   useEffect(() => {
     let on = true;
-    signedUrl(bucket, path).then((u) => {
-      if (on) setUrl(u);
-    });
+    setUrl(null);
+    setFailed(false);
+    signedUrl(bucket, path)
+      .then((u) => {
+        if (on) setUrl(u);
+      })
+      .catch(() => {
+        if (on) setFailed(true);
+      });
     return () => {
       on = false;
     };
   }, [bucket, path]);
-  if (!url) return null;
+  if (failed) return <div className="image-state error">No se pudo cargar la foto.</div>;
+  if (!url) return <div className="image-state loading" aria-label="Cargando foto" />;
   return <img className="receipt-img" src={url} alt={alt} />;
 }
 
@@ -398,6 +421,7 @@ function ZoomableImage({
   alt: string;
 }) {
   const [url, setUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
   const stageRef = useRef<HTMLDivElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
   const [zoomed, setZoomed] = useState(false);
@@ -418,9 +442,15 @@ function ZoomableImage({
 
   useEffect(() => {
     let on = true;
-    signedUrl(bucket, path).then((u) => {
-      if (on) setUrl(u);
-    });
+    setUrl(null);
+    setFailed(false);
+    signedUrl(bucket, path)
+      .then((u) => {
+        if (on) setUrl(u);
+      })
+      .catch(() => {
+        if (on) setFailed(true);
+      });
     return () => {
       on = false;
     };
@@ -523,7 +553,8 @@ function ZoomableImage({
     }
   }
 
-  if (!url) return null;
+  if (failed) return <div className="image-state error">No se pudo cargar el comprobante.</div>;
+  if (!url) return <div className="image-state loading large" aria-label="Cargando comprobante" />;
   return (
     <div
       className={`zoom-stage ${zoomed ? "zoomed" : ""}`}
@@ -533,7 +564,10 @@ function ZoomableImage({
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
       onDoubleClick={(e) => zoomAt(e.clientX, e.clientY, st.current.scale > 1.02 ? 1 : 2.5)}
-      onWheel={(e) => zoomAt(e.clientX, e.clientY, st.current.scale * (e.deltaY < 0 ? 1.18 : 0.85))}
+      onWheel={(e) => {
+        e.preventDefault();
+        zoomAt(e.clientX, e.clientY, st.current.scale * (e.deltaY < 0 ? 1.18 : 0.85));
+      }}
     >
       <img ref={imgRef} src={url} alt={alt} draggable={false} />
       {!zoomed ? <span className="zoom-hint">Pellizca o toca 2 veces para acercar</span> : null}
@@ -556,6 +590,12 @@ function PhotoPicker({
   const cameraRef = useRef<HTMLInputElement>(null);
   const galleryRef = useRef<HTMLInputElement>(null);
 
+  function clearPhoto() {
+    if (cameraRef.current) cameraRef.current.value = "";
+    if (galleryRef.current) galleryRef.current.value = "";
+    onPick(null);
+  }
+
   return (
     <div className="photo-picker">
       <input
@@ -577,7 +617,7 @@ function PhotoPicker({
         <Icon size={18} />
         <span>{file ? file.name : label}</span>
         {file ? (
-          <button className="photo-clear" type="button" onClick={() => onPick(null)} aria-label="Quitar foto">
+          <button className="photo-clear" type="button" onClick={clearPhoto} aria-label="Quitar foto">
             <X size={16} />
           </button>
         ) : null}
@@ -687,6 +727,7 @@ function AppNav({
               key={item.view}
               onClick={() => setActiveView(item.view)}
               type="button"
+              aria-current={active ? "page" : undefined}
             >
               <Icon size={20} />
               <span>{item.label}</span>
@@ -699,6 +740,7 @@ function AppNav({
 }
 
 function TopBar({
+  activeView,
   currentUser,
   household,
   unreadCount,
@@ -706,6 +748,7 @@ function TopBar({
   onNotificationsClick,
   onProfileClick
 }: {
+  activeView: View;
   currentUser: Person;
   household: Household;
   unreadCount: number;
@@ -713,13 +756,18 @@ function TopBar({
   onNotificationsClick: () => void;
   onProfileClick: () => void;
 }) {
+  const activeLabel = NAV_ITEMS.find((item) => item.view === activeView)?.label ?? "Inicio";
+
   return (
     <header className="top-bar">
       <div className="mobile-brand">
         <span className="brand-mark">
           <BrandGlyph size={22} />
         </span>
-        <strong>NestLoop</strong>
+        <div>
+          <span>{household.name}</span>
+          <strong>{activeLabel}</strong>
+        </div>
       </div>
       <div className="top-greeting">
         <p className="eyebrow">{household.name}</p>
@@ -1042,17 +1090,21 @@ function HomeView({
   const currentTurns = rotations
     .filter((rotation) => rotation.queue[rotation.currentIndex] === currentUser.id)
     .slice(0, 2);
+  const urgentCount = monthlyDue.length + myOpenShares.length + needsConfirmation.length + currentTurns.length;
 
   return (
     <section className="view-stack">
-      <div className="hero-panel">
+      <div className="home-intro">
         <div>
           <p className="eyebrow">Hoy para {currentUser.name}</p>
-          <h1>El hogar se siente mejor cuando cada quien sabe qué le toca.</h1>
+          <h1>{urgentCount ? `${urgentCount} ${urgentCount === 1 ? "cosa" : "cosas"} por revisar` : "Todo está al día"}</h1>
+          <p className="home-intro-copy">
+            {urgentCount ? "Empieza por lo más importante y sigue con tu día." : "No tienes pagos ni turnos urgentes ahora mismo."}
+          </p>
         </div>
-        <button className="primary-action" onClick={() => setActiveView("expenses")} type="button">
+        <button className="primary-action home-add-action" onClick={() => setActiveView("expenses")} type="button">
           <ReceiptText size={19} />
-          Agregar gasto
+          Nuevo gasto
         </button>
       </div>
 
@@ -1076,13 +1128,14 @@ function HomeView({
 
       <div className="section-heading">
         <div>
-          <p className="eyebrow">Próximas acciones</p>
-          <h2>Resolver y cerrar</h2>
+          <p className="eyebrow">Para ti</p>
+          <h2>Lo próximo</h2>
         </div>
+        {urgentCount ? <span className="section-count">{urgentCount}</span> : null}
       </div>
 
       <div className="action-list">
-        {monthlyDue.map(({ bill, amount, period, daysLeft }) => {
+        {monthlyDue.slice(0, 2).map(({ bill, amount, period, daysLeft }) => {
           const dueLabel =
             daysLeft < 0
               ? `Vencida hace ${-daysLeft} día${-daysLeft === 1 ? "" : "s"}`
@@ -1162,8 +1215,8 @@ function HomeView({
         <>
           <div className="section-heading compact">
             <div>
-              <p className="eyebrow">Tablero de la casa</p>
-              <h2>De un vistazo</h2>
+              <p className="eyebrow">En la casa</p>
+              <h2>Turnos actuales</h2>
             </div>
           </div>
           <div className="board-grid">
@@ -1188,12 +1241,37 @@ function HomeView({
 }
 
 function ExpenseCard({ expense, onOpen }: { expense: Expense; onOpen: (id: string) => void }) {
-  const { getPerson } = useApp();
+  const { getPerson, currentUserId } = useApp();
   const paidBy = getPerson(expense.paidBy);
   const confirmed = expense.shares.filter((share) => share.status === "confirmed").length;
   const progress = expense.shares.length ? Math.round((confirmed / expense.shares.length) * 100) : 0;
 
   const allDone = expense.shares.length > 0 && confirmed === expense.shares.length;
+  const myShare = expense.shares.find((share) => share.personId === currentUserId);
+  const waitingFor = expense.shares.filter(
+    (share) => share.personId !== currentUserId && share.status !== "confirmed"
+  ).length;
+
+  let status = "No participas";
+  let statusTone = "muted";
+  if (expense.paidBy === currentUserId) {
+    status = allDone ? "Saldado" : `${waitingFor} ${waitingFor === 1 ? "persona pendiente" : "personas pendientes"}`;
+    statusTone = allDone ? "done" : "incoming";
+  } else if (myShare) {
+    if (myShare.status === "confirmed") {
+      status = "Tu parte está saldada";
+      statusTone = "done";
+    } else if (myShare.status === "sent") {
+      status = "Pago enviado";
+      statusTone = "sent";
+    } else if (myShare.status === "rejected") {
+      status = `Revisa tu pago de ${money(myShare.amount)}`;
+      statusTone = "danger";
+    } else {
+      status = `Debes ${money(myShare.amount)}`;
+      statusTone = "danger";
+    }
+  }
 
   return (
     <button className="expense-card" onClick={() => onOpen(expense.id)} type="button">
@@ -1203,14 +1281,13 @@ function ExpenseCard({ expense, onOpen }: { expense: Expense; onOpen: (id: strin
       <div className="expense-card-info">
         <strong>{expense.title}</strong>
         <small>
-          pagó {paidBy.shortName} · {shortDate(expense.purchasedAt)}
+          Pagó {paidBy.shortName} · {shortDate(expense.purchasedAt)}
         </small>
+        <span className={`expense-status ${statusTone}`}>{status}</span>
       </div>
       <div className="expense-card-amount">
         <strong>{money(expense.amount)}</strong>
-        <small className={allDone ? "done" : ""}>
-          {allDone ? "Saldado" : `${confirmed}/${expense.shares.length}`}
-        </small>
+        <small>{confirmed}/{expense.shares.length}</small>
       </div>
       <span className="expense-card-progress" aria-label={`${progress}% confirmado`}>
         <span style={{ width: `${progress}%` }} />
@@ -2112,9 +2189,6 @@ function RecurringBillCard({
 
   const isAdmin = getPerson(currentUserId).role === "admin";
   const canManage = bill.createdBy === currentUserId || isAdmin;
-  const longPress = useLongPress(() => {
-    if (canManage) setShowActions(true);
-  });
 
   const period = billActivePeriod(bill);
   const monthName = periodMonthName(period);
@@ -2139,7 +2213,7 @@ function RecurringBillCard({
   }
 
   return (
-    <article className="recurring-card" {...longPress}>
+    <article className="recurring-card">
       <div className="recurring-top">
         <IconBubble icon={CalendarDays} tone="sky" />
         <div className="recurring-title">
@@ -2278,28 +2352,39 @@ function ExpensesView({
 
   return (
     <section className="view-stack">
-      <div className="view-head">
-        <h1 className="view-title">Gastos y pagos</h1>
-        <div className="subtabs">
-          <button className={tab === "expenses" ? "active" : ""} onClick={() => setTab("expenses")} type="button">
-            Gastos
-          </button>
-          <button className={tab === "balances" ? "active" : ""} onClick={() => setTab("balances")} type="button">
-            Saldos
-          </button>
-          <button className={tab === "monthly" ? "active" : ""} onClick={() => setTab("monthly")} type="button">
-            Mensual
-            {iOweMonthly ? <span className="subtab-dot" aria-hidden /> : null}
-          </button>
+      <div className="page-header">
+        <div>
+          <p className="eyebrow">Dinero compartido</p>
+          <h1>Gastos y pagos</h1>
+          <p>Lo que debes, lo que te deben y los pagos de cada mes.</p>
         </div>
+        {tab === "expenses" ? (
+          <button className="primary-action page-header-action" onClick={() => setShowForm(true)} type="button">
+            <Plus size={19} />
+            Agregar gasto
+          </button>
+        ) : tab === "monthly" ? (
+          <button className="primary-action page-header-action" onClick={() => setShowBillForm(true)} type="button">
+            <Plus size={19} />
+            Agregar mensual
+          </button>
+        ) : null}
+      </div>
+      <div className="subtabs" aria-label="Secciones de gastos">
+        <button className={tab === "expenses" ? "active" : ""} onClick={() => setTab("expenses")} type="button">
+          Gastos <small>{expenses.length}</small>
+        </button>
+        <button className={tab === "balances" ? "active" : ""} onClick={() => setTab("balances")} type="button">
+          Saldos
+        </button>
+        <button className={tab === "monthly" ? "active" : ""} onClick={() => setTab("monthly")} type="button">
+          Mensual <small>{recurringBills.length}</small>
+          {iOweMonthly ? <span className="subtab-dot" aria-hidden /> : null}
+        </button>
       </div>
 
       {tab === "expenses" ? (
         <>
-          <button className="primary-action full" onClick={() => setShowForm(true)} type="button">
-            <Plus size={19} />
-            Agregar gasto
-          </button>
           {expenses.length ? (
             <div className="expense-list">
               {expenses.map((expense) => (
@@ -2359,10 +2444,6 @@ function ExpensesView({
         </>
       ) : (
         <>
-          <button className="primary-action full" onClick={() => setShowBillForm(true)} type="button">
-            <Plus size={19} />
-            Agregar pago mensual
-          </button>
           {recurringBills.length ? (
             <div className="recurring-list">
               {recurringBills.map((bill) => (
@@ -2420,11 +2501,12 @@ function RotationCard({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showActions, setShowActions] = useState(false);
-  const longPress = useLongPress(() => setShowActions(true));
+  const [expanded, setExpanded] = useState(false);
 
   const isAdmin = getPerson(currentUserId).role === "admin";
   const Icon = rotationIcon(rotation.icon);
   const currentPerson = getPerson(rotation.queue[rotation.currentIndex]);
+  const nextPerson = getPerson(rotation.queue[(rotation.currentIndex + 1) % rotation.queue.length]);
   const isMyTurn = rotation.queue[rotation.currentIndex] === currentUserId;
   const canMark = isMyTurn || isAdmin;
   const canUndo = (rotation.history[0]?.personId === currentUserId || isAdmin) && rotation.history.length > 0;
@@ -2442,7 +2524,7 @@ function RotationCard({
   }
 
   return (
-    <article className="rotation-card" {...longPress}>
+    <article className="rotation-card">
       <div className="rotation-top">
         <IconBubble icon={Icon} tone="sky" />
         <div>
@@ -2464,18 +2546,12 @@ function RotationCard({
           <span>Le toca</span>
           <strong>{currentPerson.name}</strong>
         </div>
-      </div>
-      <div className="queue-strip">
-        {rotation.queue.map((personId, index) => {
-          const person = getPerson(personId);
-          const active = index === rotation.currentIndex;
-          return (
-            <span className={active ? "active" : ""} key={`${rotation.id}-${personId}`}>
-              <Avatar person={person} size="sm" />
-              {person.shortName}
-            </span>
-          );
-        })}
+        {rotation.queue.length > 1 ? (
+          <div className="rotation-next">
+            <span>Después</span>
+            <strong>{nextPerson.shortName}</strong>
+          </div>
+        ) : null}
       </div>
 
       {canMark ? (
@@ -2504,14 +2580,44 @@ function RotationCard({
 
       {error ? <div className="auth-alert error">{error}</div> : null}
 
-      <div className="history-list">
-        {rotation.history.slice(0, 2).map((event) => (
-          <div key={`${event.personId}-${event.completedAt}`}>
-            <span>{getPerson(event.personId).shortName}</span>
-            <small>{shortDate(event.completedAt.slice(0, 10))}</small>
+      <button
+        className="rotation-details-toggle"
+        onClick={() => setExpanded((current) => !current)}
+        type="button"
+        aria-expanded={expanded}
+      >
+        <span>Orden e historial</span>
+        {expanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+      </button>
+
+      {expanded ? (
+        <div className="rotation-details">
+          <div className="queue-strip" aria-label="Orden del turno">
+            {rotation.queue.map((personId, index) => {
+              const person = getPerson(personId);
+              const active = index === rotation.currentIndex;
+              return (
+                <span className={active ? "active" : ""} key={`${rotation.id}-${personId}`}>
+                  <Avatar person={person} size="sm" />
+                  {person.shortName}
+                </span>
+              );
+            })}
           </div>
-        ))}
-      </div>
+          {rotation.history.length ? (
+            <div className="history-list">
+              {rotation.history.slice(0, 3).map((event) => (
+                <div key={`${event.personId}-${event.completedAt}`}>
+                  <span>{getPerson(event.personId).shortName}</span>
+                  <small>{shortDate(event.completedAt.slice(0, 10))}</small>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="rotation-no-history">Todavía no hay turnos completados.</p>
+          )}
+        </div>
+      ) : null}
 
       {showActions ? (
         <ItemActionsSheet
@@ -2697,12 +2803,13 @@ function TasksView({
 
   return (
     <section className="view-stack">
-      <div className="section-heading">
+      <div className="page-header">
         <div>
-          <p className="eyebrow">Turnos rotativos</p>
-          <h1>Sin cuentas en la pizarra.</h1>
+          <p className="eyebrow">Responsabilidades</p>
+          <h1>Turnos</h1>
+          <p>Ve a quién le toca ahora y marca cada tarea cuando esté lista.</p>
         </div>
-        <button className="primary-action" onClick={() => setShowForm(true)} type="button">
+        <button className="primary-action page-header-action" onClick={() => setShowForm(true)} type="button">
           <Plus size={19} />
           Nuevo turno
         </button>
@@ -2741,11 +2848,13 @@ function TasksView({
 
 function ScheduleForm({
   currentUser,
+  defaultDay,
   initial,
   onClose,
   onSubmit
 }: {
   currentUser: Person;
+  defaultDay?: number;
   initial?: ScheduleSlot | null;
   onClose: () => void;
   onSubmit: (input: NewSlotInput) => Promise<void>;
@@ -2753,16 +2862,17 @@ function ScheduleForm({
   const { people } = useApp();
   const isEdit = !!initial;
   const [personId, setPersonId] = useState(initial?.personId ?? currentUser.id);
-  const [day, setDay] = useState(String(initial?.day ?? 0));
+  const [day, setDay] = useState(String(initial?.day ?? defaultDay ?? 0));
   const [start, setStart] = useState(initial?.start ?? "18:00");
   const [end, setEnd] = useState(initial?.end ?? "20:00");
   const [label, setLabel] = useState(initial?.label ?? "Lavadora");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const validTime = start < end;
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (saving) return;
+    if (saving || !validTime) return;
     setSaving(true);
     setError(null);
     try {
@@ -2820,8 +2930,11 @@ function ScheduleForm({
             <input type="time" value={end} onChange={(event) => setEnd(event.target.value)} />
           </label>
         </div>
+        {!validTime ? (
+          <div className="difference-note">La hora de fin debe ser posterior a la hora de inicio.</div>
+        ) : null}
         {error ? <div className="auth-alert error">{error}</div> : null}
-        <button className="primary-action full" type="submit" disabled={saving}>
+        <button className="primary-action full" type="submit" disabled={saving || !validTime}>
           <Plus size={19} />
           {saving ? "Guardando…" : isEdit ? "Guardar cambios" : "Agregar horario"}
         </button>
@@ -2844,65 +2957,105 @@ function CalendarView({
   onDelete: (id: string) => Promise<void>;
 }) {
   const { getPerson } = useApp();
+  const todayIndex = (new Date().getDay() + 6) % 7;
+  const [selectedDay, setSelectedDay] = useState(todayIndex);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<ScheduleSlot | null>(null);
   const [actionsSlot, setActionsSlot] = useState<ScheduleSlot | null>(null);
   const canManageSlot = (slot: ScheduleSlot) => currentUser.role === "admin" || slot.createdBy === currentUser.id;
+  const selectedSlots = slots
+    .filter((slot) => slot.day === selectedDay)
+    .sort((a, b) => a.start.localeCompare(b.start));
 
   return (
     <section className="view-stack">
-      <div className="section-heading">
+      <div className="page-header">
         <div>
-          <p className="eyebrow">Horarios de la semana</p>
-          <h1>Turnos claros, menos sorpresas.</h1>
+          <p className="eyebrow">Esta semana</p>
+          <h1>Horarios</h1>
+          <p>Elige un día para ver quién tiene reservado cada horario.</p>
         </div>
-        <button className="primary-action" onClick={() => setShowForm(true)} type="button">
+        <button className="primary-action page-header-action" onClick={() => setShowForm(true)} type="button">
           <Plus size={19} />
           Agregar horario
         </button>
       </div>
 
-      <div className="calendar-grid">
+      <div className="week-strip" role="tablist" aria-label="Días de la semana">
         {DAYS.map((day, dayIndex) => {
-          const daySlots = slots.filter((slot) => slot.day === dayIndex);
+          const count = slots.filter((slot) => slot.day === dayIndex).length;
+          const selected = selectedDay === dayIndex;
           return (
-            <article className="day-card" key={day}>
-              <strong className="day-name">{day}</strong>
-              {daySlots.length ? (
-                daySlots.map((slot) => {
-                  const person = getPerson(slot.personId);
-                  const canManage = canManageSlot(slot);
-                  return (
-                    <button
-                      className={`slot-pill ${canManage ? "" : "readonly"}`}
-                      key={slot.id}
-                      type="button"
-                      onClick={canManage ? () => setActionsSlot(slot) : undefined}
-                      disabled={!canManage}
-                      aria-label={`${person.shortName}, ${slot.label}, de ${displayTime(slot.start)} a ${displayTime(slot.end)}`}
-                      style={{ "--slot-color": person.color, "--slot-tint": person.tint } as CSSProperties}
-                    >
-                      <Avatar person={person} size="sm" />
-                      <span className="slot-copy">
-                        <strong>{person.shortName}</strong>
-                        <small className="slot-label">{slot.label}</small>
-                        <small className="slot-time">
-                          {displayTime(slot.start)} - {displayTime(slot.end)}
-                        </small>
-                      </span>
-                    </button>
-                  );
-                })
-              ) : (
-                <span className="open-slot">Libre</span>
-              )}
-            </article>
+            <button
+              className={`week-day-button ${selected ? "selected" : ""} ${todayIndex === dayIndex ? "today" : ""}`}
+              key={day}
+              onClick={() => setSelectedDay(dayIndex)}
+              type="button"
+              role="tab"
+              aria-selected={selected}
+              aria-label={`${DAYS_FULL[dayIndex]}${count ? `, ${count} horarios` : ", libre"}`}
+            >
+              <span>{day}</span>
+              <small>{count || "·"}</small>
+            </button>
           );
         })}
       </div>
 
+      <article className="day-agenda">
+        <div className="day-agenda-head">
+          <div>
+            <p className="eyebrow">Día seleccionado</p>
+            <h2>{DAYS_FULL[selectedDay]}</h2>
+          </div>
+          <span>{selectedSlots.length ? `${selectedSlots.length} ${selectedSlots.length === 1 ? "horario" : "horarios"}` : "Libre"}</span>
+        </div>
+        {selectedSlots.length ? (
+          <div className="day-agenda-list">
+            {selectedSlots.map((slot) => {
+              const person = getPerson(slot.personId);
+              const canManage = canManageSlot(slot);
+              return (
+                <button
+                  className={`slot-pill ${canManage ? "" : "readonly"}`}
+                  key={slot.id}
+                  type="button"
+                  onClick={canManage ? () => setActionsSlot(slot) : undefined}
+                  disabled={!canManage}
+                  aria-label={`${person.shortName}, ${slot.label}, de ${displayTime(slot.start)} a ${displayTime(slot.end)}`}
+                  style={{ "--slot-color": person.color, "--slot-tint": person.tint } as CSSProperties}
+                >
+                  <Avatar person={person} size="sm" />
+                  <span className="slot-copy">
+                    <strong>{person.shortName}</strong>
+                    <small className="slot-label">{slot.label}</small>
+                    <small className="slot-time">
+                      {displayTime(slot.start)} - {displayTime(slot.end)}
+                    </small>
+                  </span>
+                  {canManage ? <ChevronRight size={19} /> : null}
+                </button>
+              );
+            })}
+          </div>
+        ) : (
+          <button className="open-day" onClick={() => setShowForm(true)} type="button">
+            <Plus size={20} />
+            <span>
+              <strong>No hay horarios</strong>
+              <small>Agrega uno para {DAYS_FULL[selectedDay].toLowerCase()}.</small>
+            </span>
+          </button>
+        )}
+      </article>
+
       {showForm ? (
-        <ScheduleForm currentUser={currentUser} onClose={() => setShowForm(false)} onSubmit={onCreate} />
+        <ScheduleForm
+          currentUser={currentUser}
+          defaultDay={selectedDay}
+          onClose={() => setShowForm(false)}
+          onSubmit={onCreate}
+        />
       ) : null}
       {editing ? (
         <ScheduleForm
@@ -3166,10 +3319,11 @@ function PeopleView({
 
   return (
     <section className="view-stack">
-      <div className="section-heading">
+      <div className="page-header">
         <div>
           <p className="eyebrow">La casa</p>
-          <h1>Quiénes viven aquí.</h1>
+          <h1>Personas</h1>
+          <p>{people.length} {people.length === 1 ? "persona forma" : "personas forman"} parte de {household.name}.</p>
         </div>
       </div>
 
@@ -3547,6 +3701,7 @@ export function NestLoopApp({
   const [seenNotificationIds, setSeenNotificationIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [notificationPermission, setNotificationPermission] = useState<
     NotificationPermission | PushRegistrationResult
   >("unsupported");
@@ -3617,7 +3772,7 @@ export function NestLoopApp({
     return () => {
       on = false;
     };
-  }, [hid]);
+  }, [hid, loadAttempt]);
 
   // Actualización en vivo: refresca mientras la app está abierta (cada 12s)
   // y al instante cuando vuelves a la app (cambio de pestaña / volver al frente).
@@ -3888,6 +4043,7 @@ export function NestLoopApp({
         <AppNav activeView={activeView} setActiveView={setActiveView} />
         <div className="app-main">
           <TopBar
+            activeView={activeView}
             currentUser={currentUser}
             household={household}
             notificationPermission={notificationPermission}
@@ -3907,7 +4063,11 @@ export function NestLoopApp({
             <div className="empty-state">
               <Database size={28} />
               <strong>No se pudo cargar</strong>
-              <span>Revisa tu conexión y vuelve a abrir la app.</span>
+              <span>Revisa tu conexión e inténtalo otra vez.</span>
+              <button className="secondary-action" onClick={() => setLoadAttempt((attempt) => attempt + 1)} type="button">
+                <RotateCw size={18} />
+                Reintentar
+              </button>
             </div>
           ) : (
             <>
