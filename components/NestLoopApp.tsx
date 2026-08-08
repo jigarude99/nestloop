@@ -55,6 +55,7 @@ import { hasSupabaseConfig } from "../lib/supabase";
 import { Household, Person } from "../lib/household";
 import { BrandGlyph } from "./BrandGlyph";
 import {
+  cancelOwnCashPayment as apiCancelOwnCashPayment,
   createExpense as apiCreateExpense,
   createRecurringBill as apiCreateRecurringBill,
   createRotation as apiCreateRotation,
@@ -575,7 +576,162 @@ function ZoomableImage({
   );
 }
 
-/** Selector de foto con dos opciones claras: tomar con la cámara o elegir de galería. */
+function CameraCaptureSheet({
+  onCapture,
+  onChooseGallery,
+  onClose
+}: {
+  onCapture: (file: File) => void;
+  onChooseGallery: () => void;
+  onClose: () => void;
+}) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const [cameraState, setCameraState] = useState<"loading" | "ready" | "error">("loading");
+  const [cameraError, setCameraError] = useState("");
+  const [capturing, setCapturing] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+
+    async function openCamera() {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setCameraError("Este navegador no puede abrir la cámara aquí. Elige la foto desde Galería.");
+        setCameraState("error");
+        return;
+      }
+
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: {
+            facingMode: { ideal: "environment" },
+            width: { ideal: 1920 },
+            height: { ideal: 1440 }
+          }
+        });
+
+        if (!active) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+
+        streamRef.current = stream;
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          await videoRef.current.play();
+        }
+        setCameraState("ready");
+      } catch (caught) {
+        streamRef.current?.getTracks().forEach((track) => track.stop());
+        streamRef.current = null;
+        const name = caught instanceof DOMException ? caught.name : "";
+        setCameraError(
+          name === "NotAllowedError"
+            ? "NestLoop necesita permiso para usar la cámara. Actívalo o elige la foto desde Galería."
+            : name === "NotFoundError"
+              ? "No encontramos una cámara disponible. Elige la foto desde Galería."
+              : "No pudimos abrir la cámara. Cierra otras apps que la estén usando e inténtalo de nuevo."
+        );
+        setCameraState("error");
+      }
+    }
+
+    void openCamera();
+    return () => {
+      active = false;
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    };
+  }, []);
+
+  async function takePhoto() {
+    const video = videoRef.current;
+    if (!video || !video.videoWidth || !video.videoHeight || capturing) return;
+
+    setCapturing(true);
+    setCameraError("");
+    try {
+      const maxSide = 2560;
+      const scale = Math.min(1, maxSide / Math.max(video.videoWidth, video.videoHeight));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(video.videoWidth * scale);
+      canvas.height = Math.round(video.videoHeight * scale);
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("No se pudo preparar la foto.");
+      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+      const blob = await new Promise<Blob>((resolve, reject) => {
+        canvas.toBlob(
+          (result) => (result ? resolve(result) : reject(new Error("No se pudo guardar la foto."))),
+          "image/jpeg",
+          0.9
+        );
+      });
+
+      onCapture(new File([blob], `nestloop-${Date.now()}.jpg`, { type: "image/jpeg" }));
+      onClose();
+    } catch (caught) {
+      setCameraError(caught instanceof Error ? caught.message : "No se pudo tomar la foto.");
+      setCameraState("error");
+    } finally {
+      setCapturing(false);
+    }
+  }
+
+  return (
+    <ModalBackdrop onClose={onClose}>
+      <div className="modal-sheet camera-sheet" role="dialog" aria-modal="true" aria-labelledby="camera-title">
+        <div className="modal-header camera-header">
+          <div>
+            <p className="eyebrow">Comprobante</p>
+            <h2 id="camera-title">Tomar foto</h2>
+          </div>
+          <button className="icon-button" onClick={onClose} type="button" aria-label="Cerrar cámara">
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="camera-stage">
+          <video ref={videoRef} className="camera-video" autoPlay muted playsInline aria-label="Vista de la cámara" />
+          {cameraState === "loading" ? (
+            <div className="camera-message" role="status">
+              <span className="camera-spinner" aria-hidden="true">
+                <RotateCw size={25} />
+              </span>
+              <strong>Abriendo cámara…</strong>
+            </div>
+          ) : null}
+          {cameraState === "error" ? (
+            <div className="camera-message camera-message-error" role="alert">
+              <Camera size={27} />
+              <strong>No se pudo abrir</strong>
+              <span>{cameraError}</span>
+            </div>
+          ) : null}
+        </div>
+
+        <p className="camera-help">Asegúrate de que el comprobante completo quede dentro de la imagen.</p>
+        <button
+          className="primary-action full camera-capture"
+          disabled={cameraState !== "ready" || capturing}
+          onClick={() => void takePhoto()}
+          type="button"
+        >
+          <Camera size={20} />
+          {capturing ? "Guardando…" : "Tomar foto"}
+        </button>
+        {cameraState === "error" ? (
+          <button className="secondary-action full" onClick={onChooseGallery} type="button">
+            Elegir desde Galería
+          </button>
+        ) : null}
+      </div>
+    </ModalBackdrop>
+  );
+}
+
+/** Selector de foto con cámara integrada y acceso a la galería. */
 function PhotoPicker({
   file,
   onPick,
@@ -587,25 +743,16 @@ function PhotoPicker({
   label: string;
   icon?: LucideIcon;
 }) {
-  const cameraRef = useRef<HTMLInputElement>(null);
   const galleryRef = useRef<HTMLInputElement>(null);
+  const [cameraOpen, setCameraOpen] = useState(false);
 
   function clearPhoto() {
-    if (cameraRef.current) cameraRef.current.value = "";
     if (galleryRef.current) galleryRef.current.value = "";
     onPick(null);
   }
 
   return (
     <div className="photo-picker">
-      <input
-        ref={cameraRef}
-        type="file"
-        accept="image/*"
-        capture="environment"
-        hidden
-        onChange={(event) => onPick(event.target.files?.[0] ?? null)}
-      />
       <input
         ref={galleryRef}
         type="file"
@@ -623,7 +770,7 @@ function PhotoPicker({
         ) : null}
       </div>
       <div className="photo-picker-actions">
-        <button type="button" onClick={() => cameraRef.current?.click()}>
+        <button type="button" onClick={() => setCameraOpen(true)}>
           <Camera size={17} />
           Cámara
         </button>
@@ -632,6 +779,16 @@ function PhotoPicker({
           Galería
         </button>
       </div>
+      {cameraOpen ? (
+        <CameraCaptureSheet
+          onCapture={(capturedFile) => onPick(capturedFile)}
+          onChooseGallery={() => {
+            setCameraOpen(false);
+            galleryRef.current?.click();
+          }}
+          onClose={() => setCameraOpen(false)}
+        />
+      ) : null}
     </div>
   );
 }
@@ -1539,6 +1696,7 @@ function ExpenseDetail({
   currentUser,
   onClose,
   onMarkPaid,
+  onCancelCashPayment,
   onPayForEveryone,
   onConfirm,
   onReject,
@@ -1549,6 +1707,7 @@ function ExpenseDetail({
   currentUser: Person;
   onClose: () => void;
   onMarkPaid: (expenseId: string, personId: string, method: PaymentMethod, proofFile: File | null) => Promise<void>;
+  onCancelCashPayment: (expenseId: string) => Promise<void>;
   onPayForEveryone: (expense: Expense, method: PaymentMethod, proofFile: File | null) => Promise<void>;
   onConfirm: (expenseId: string, personId: string) => Promise<void>;
   onReject: (expenseId: string, personId: string) => Promise<void>;
@@ -1562,6 +1721,7 @@ function ExpenseDetail({
   const [bulkProofFile, setBulkProofFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [confirmCancelCash, setConfirmCancelCash] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [viewingReceipt, setViewingReceipt] = useState(false);
   const receiptHistoryPushedRef = useRef(false);
@@ -1570,9 +1730,13 @@ function ExpenseDetail({
 
   const payer = getPerson(expense.paidBy);
   const currentShare = expense.shares.find((share) => share.personId === currentUser.id);
+  const cashAwaitingConfirmation = currentShare?.status === "sent";
   const needsProof = method !== "cash";
   const canSendPayment =
-    !!currentShare && currentShare.status !== "confirmed" && (!needsProof || !!proofFile) && !busy;
+    !!currentShare &&
+    (currentShare.status === "pending" || currentShare.status === "rejected") &&
+    (!needsProof || !!proofFile) &&
+    !busy;
   const canManage =
     expense.createdBy === currentUser.id ||
     expense.paidBy === currentUser.id ||
@@ -1585,6 +1749,7 @@ function ExpenseDetail({
   const bulkNeedsProof = bulkMethod !== "cash";
   const canPayForEveryone =
     expense.paidBy !== currentUser.id &&
+    !cashAwaitingConfirmation &&
     unsettledShares.length > 0 &&
     reimbursementCount > 0 &&
     (!bulkNeedsProof || !!bulkProofFile) &&
@@ -1650,8 +1815,12 @@ function ExpenseDetail({
     setError(null);
     try {
       await action();
-    } catch {
-      setError("No se pudo guardar. Intenta de nuevo.");
+    } catch (caught) {
+      const message =
+        caught && typeof caught === "object" && "message" in caught && typeof caught.message === "string"
+          ? caught.message
+          : "No se pudo guardar. Intenta de nuevo.";
+      setError(message);
     } finally {
       setBusy(false);
     }
@@ -1760,39 +1929,103 @@ function ExpenseDetail({
         </div>
 
         {currentShare && currentShare.status !== "confirmed" && expense.paidBy !== currentUser.id ? (
-          <div className="payment-box">
-            <div className="split-toolbar">
-              <span>Marcar pago</span>
-              <div className="segmented">
-                <button className={method === "transfer" ? "active" : ""} onClick={() => setMethod("transfer")} type="button">
-                  Transferencia
-                </button>
-                <button className={method === "cash" ? "active" : ""} onClick={() => setMethod("cash")} type="button">
-                  Efectivo
-                </button>
+          cashAwaitingConfirmation ? (
+            <div className="payment-box payment-awaiting-box">
+              <div className="payment-awaiting-heading">
+                <span className="payment-awaiting-icon" aria-hidden="true">
+                  <Clock3 size={21} />
+                </span>
+                <div>
+                  <strong>Esperando confirmación</strong>
+                  <span>
+                    Avisaste que entregaste {money(currentShare.amount)} en efectivo a {payer.shortName}. No puedes
+                    registrar otro pago mientras esté pendiente.
+                  </span>
+                </div>
               </div>
+              {confirmCancelCash ? (
+                <div className="cancel-payment-confirm" role="alert">
+                  <strong>¿Cancelar el aviso de efectivo?</strong>
+                  <span>Tu parte volverá a aparecer como pendiente y podrás elegir otra forma de pago.</span>
+                  <div className="row-actions">
+                    <button
+                      className="tiny-button"
+                      disabled={busy}
+                      onClick={() => setConfirmCancelCash(false)}
+                      type="button"
+                    >
+                      Volver
+                    </button>
+                    <button
+                      className="tiny-button good"
+                      disabled={busy}
+                      onClick={() =>
+                        run(async () => {
+                          await onCancelCashPayment(expense.id);
+                          setConfirmCancelCash(false);
+                        })
+                      }
+                      type="button"
+                    >
+                      {busy ? "Cancelando…" : "Sí, cancelar aviso"}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  className="secondary-action full"
+                  disabled={busy}
+                  onClick={() => setConfirmCancelCash(true)}
+                  type="button"
+                >
+                  <Undo2 size={18} />
+                  Cancelar aviso de efectivo
+                </button>
+              )}
             </div>
-            {method !== "cash" ? (
-              <PhotoPicker file={proofFile} onPick={setProofFile} label="Subir captura del pago" icon={Upload} />
-            ) : (
-              <div className="cash-note">
-                <HandCoins size={19} />
-                <span>El efectivo espera que {payer.shortName} lo confirme.</span>
+          ) : (
+            <div className="payment-box">
+              {currentShare.status === "rejected" ? (
+                <div className="payment-rejected-note" role="status">
+                  El pago anterior fue rechazado. Revisa la forma de pago y vuelve a enviarlo.
+                </div>
+              ) : null}
+              <div className="split-toolbar">
+                <span>Marcar pago</span>
+                <div className="segmented">
+                  <button className={method === "transfer" ? "active" : ""} onClick={() => setMethod("transfer")} type="button">
+                    Transferencia
+                  </button>
+                  <button className={method === "cash" ? "active" : ""} onClick={() => setMethod("cash")} type="button">
+                    Efectivo
+                  </button>
+                </div>
               </div>
-            )}
-            <button
-              className="primary-action full"
-              disabled={!canSendPayment}
-              onClick={() => run(() => onMarkPaid(expense.id, currentUser.id, method, proofFile))}
-              type="button"
-            >
-              <BadgeCheck size={19} />
-              {busy ? "Guardando…" : `Marcar ${money(currentShare.amount)} pagado`}
-            </button>
-          </div>
+              {method !== "cash" ? (
+                <PhotoPicker file={proofFile} onPick={setProofFile} label="Subir captura del pago" icon={Upload} />
+              ) : (
+                <div className="cash-note">
+                  <HandCoins size={19} />
+                  <span>El efectivo espera que {payer.shortName} lo confirme.</span>
+                </div>
+              )}
+              <button
+                className="primary-action full"
+                disabled={!canSendPayment}
+                onClick={() => run(() => onMarkPaid(expense.id, currentUser.id, method, proofFile))}
+                type="button"
+              >
+                <BadgeCheck size={19} />
+                {busy ? "Guardando…" : `Marcar ${money(currentShare.amount)} pagado`}
+              </button>
+            </div>
+          )
         ) : null}
 
-        {expense.paidBy !== currentUser.id && unsettledShares.length > 0 && reimbursementCount > 0 ? (
+        {expense.paidBy !== currentUser.id &&
+        !cashAwaitingConfirmation &&
+        unsettledShares.length > 0 &&
+        reimbursementCount > 0 ? (
           <div className="payment-box bulk-pay-box">
             <div className="bulk-pay-heading">
               <div>
@@ -3925,6 +4158,11 @@ export function NestLoopApp({
     await reloadNotifications().catch(() => {});
     void triggerPushDispatch();
   }
+  async function handleCancelCashPayment(expenseId: string) {
+    await apiCancelOwnCashPayment(expenseId);
+    await reloadExpenses();
+    await reloadNotifications().catch(() => {});
+  }
   async function handlePayForEveryone(expense: Expense, method: PaymentMethod, proofFile: File | null) {
     await apiPayExpenseForEveryone(hid, expense.id, currentUserId, method, proofFile);
     setActiveExpenseId(null);
@@ -4138,6 +4376,7 @@ export function NestLoopApp({
             expense={activeExpense}
             onClose={() => setActiveExpenseId(null)}
             onConfirm={handleConfirm}
+            onCancelCashPayment={handleCancelCashPayment}
             onMarkPaid={handleMarkPaid}
             onPayForEveryone={handlePayForEveryone}
             onReject={handleReject}

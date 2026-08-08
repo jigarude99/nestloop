@@ -516,6 +516,10 @@ export async function markSharePaid(
   const supabase = getSupabase();
   const now = new Date().toISOString();
 
+  if (method !== "cash" && !proofFile) {
+    throw new Error("Agrega el comprobante antes de marcar la transferencia.");
+  }
+
   let proofPath: string | null = null;
   if (method !== "cash" && proofFile) {
     const path = `${householdId}/${expenseId}/${personId}-${Date.now()}-${safeName(proofFile.name)}`;
@@ -526,7 +530,7 @@ export async function markSharePaid(
     proofPath = path;
   }
 
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("expense_shares")
     .update({
       status: method === "cash" ? "sent" : "confirmed",
@@ -536,7 +540,24 @@ export async function markSharePaid(
       confirmed_at: method === "cash" ? null : now
     })
     .eq("expense_id", expenseId)
-    .eq("profile_id", personId);
+    .eq("profile_id", personId)
+    .in("status", ["pending", "rejected"])
+    .select("id")
+    .maybeSingle();
+  if (error || !data) {
+    if (proofPath) {
+      await supabase.storage.from(PROOFS).remove([proofPath]).catch(() => {});
+    }
+    if (error) throw error;
+    throw new Error("Este pago ya fue enviado o cambio de estado. Actualiza el gasto.");
+  }
+}
+
+export async function cancelOwnCashPayment(expenseId: string): Promise<void> {
+  const supabase = getSupabase();
+  const { error } = await supabase.rpc("cancel_own_cash_payment", {
+    p_expense_id: expenseId
+  });
   if (error) throw error;
 }
 
@@ -548,6 +569,21 @@ export async function payExpenseForEveryone(
   proofFile: File | null
 ): Promise<void> {
   const supabase = getSupabase();
+
+  if (method !== "cash" && !proofFile) {
+    throw new Error("Agrega el comprobante antes de marcar la transferencia.");
+  }
+
+  const { data: ownShare, error: shareError } = await supabase
+    .from("expense_shares")
+    .select("status")
+    .eq("expense_id", expenseId)
+    .eq("profile_id", payerId)
+    .maybeSingle();
+  if (shareError) throw shareError;
+  if (ownShare?.status === "sent") {
+    throw new Error("Primero cancela el aviso de efectivo que está esperando confirmación.");
+  }
 
   let proofPath: string | null = null;
   if (method !== "cash" && proofFile) {
@@ -564,7 +600,12 @@ export async function payExpenseForEveryone(
     p_method: method,
     p_proof_path: proofPath
   });
-  if (error) throw error;
+  if (error) {
+    if (proofPath) {
+      await supabase.storage.from(PROOFS).remove([proofPath]).catch(() => {});
+    }
+    throw error;
+  }
 }
 
 export async function setShareStatus(
