@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { getSupabase } from "../lib/supabase";
 import { Household, Person, toPerson } from "../lib/household";
@@ -41,6 +41,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [household, setHousehold] = useState<Household | null>(null);
   const [people, setPeople] = useState<Person[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const activeUserRef = useRef<string | null>(null);
+  const loadedUserRef = useRef<string | null>(null);
+  const loadingUserRef = useRef<string | null>(null);
 
   // Carga el perfil, la casa y los miembros del usuario actual.
   // Si una consulta falla (red móvil inestable), reintenta antes de rendirse,
@@ -56,6 +59,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       const userId = activeSession.user.id;
+      if (activeUserRef.current !== userId) return;
 
       try {
         const { data: profileRow, error: pErr } = await supabase
@@ -64,6 +68,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           .eq("id", userId)
           .maybeSingle();
         if (pErr) throw pErr;
+        if (activeUserRef.current !== userId) return;
         setProfile(profileRow ?? { id: userId, full_name: "", color: null });
 
         const { data: membership, error: mErr } = await supabase
@@ -73,11 +78,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           .limit(1)
           .maybeSingle();
         if (mErr) throw mErr;
+        if (activeUserRef.current !== userId) return;
 
         const householdRow = (membership?.household ?? null) as Household | null;
         if (!householdRow) {
           setHousehold(null);
           setPeople([]);
+          loadedUserRef.current = userId;
+          loadingUserRef.current = null;
           setStatus("no-household");
           return;
         }
@@ -88,6 +96,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           .select("profile_id, role, profile:profiles(full_name, color)")
           .eq("household_id", householdRow.id);
         if (memErr) throw memErr;
+        if (activeUserRef.current !== userId) return;
 
         const list: Person[] = (memberRows ?? []).map((row: any, index: number) =>
           toPerson(
@@ -102,12 +111,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         );
         list.sort((a, b) => (a.id === userId ? -1 : b.id === userId ? 1 : 0));
         setPeople(list);
+        loadedUserRef.current = userId;
+        loadingUserRef.current = null;
         setStatus("ready");
       } catch {
+        if (activeUserRef.current !== userId) return;
         if (attempt < 2) {
           await new Promise((r) => setTimeout(r, 700 * (attempt + 1)));
           return loadFor(activeSession, attempt + 1);
         }
+        loadingUserRef.current = null;
         setStatus("error");
       }
     },
@@ -117,6 +130,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const refresh = useCallback(async () => {
     setStatus("loading");
     const { data } = await supabase.auth.getSession();
+    activeUserRef.current = data.session?.user.id ?? null;
+    loadingUserRef.current = activeUserRef.current;
+    loadedUserRef.current = null;
     setSession(data.session);
     await loadFor(data.session);
   }, [supabase, loadFor]);
@@ -127,8 +143,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const { data: sub } = supabase.auth.onAuthStateChange((event, newSession) => {
       if (!active) return;
       setSession(newSession);
+      const userId = newSession?.user.id ?? null;
+      activeUserRef.current = userId;
 
-      if (event === "SIGNED_OUT") {
+      if (!userId || event === "SIGNED_OUT") {
+        loadedUserRef.current = null;
+        loadingUserRef.current = null;
         setProfile(null);
         setHousehold(null);
         setPeople([]);
@@ -136,22 +156,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
-      // En refresh de token o cambios de usuario NO recargamos todo ni mostramos
-      // "cargando" (evita el parpadeo y la falsa sensación de cierre de sesión).
-      if (event === "TOKEN_REFRESHED" || event === "USER_UPDATED") {
-        return;
-      }
+      // SIGNED_IN also fires when Safari/Chrome brings an existing session forward.
+      // Keeping the same app mounted preserves open sheets, fields and selected files.
+      if (loadedUserRef.current === userId || loadingUserRef.current === userId) return;
+      loadingUserRef.current = userId;
 
       // INITIAL_SESSION, SIGNED_IN, etc.: diferir fuera del callback para evitar
       // el deadlock del lock interno de auth en supabase-js v2.
       setStatus("loading");
       setTimeout(() => {
-        if (active) loadFor(newSession);
+        if (active && activeUserRef.current === userId) void loadFor(newSession);
       }, 0);
     });
 
     return () => {
       active = false;
+      loadingUserRef.current = null;
       sub.subscription.unsubscribe();
     };
   }, [supabase, loadFor]);

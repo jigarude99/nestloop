@@ -64,6 +64,7 @@ function Gate({ onBoardMode }: { onBoardMode: () => void }) {
   // status === "ready"
   return (
     <NestLoopApp
+      key={`${household!.id}:${currentUserId}`}
       people={people}
       currentUserId={currentUserId as string}
       household={household!}

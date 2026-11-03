@@ -44,6 +44,22 @@ npm run build
 npm audit --omit=dev
 ```
 
+## Mobile Navigation Checks
+
+With the local server running and `.env.local` configured:
+
+```bash
+npx playwright install chromium webkit
+npm run test:mobile
+```
+
+These checks use simulated Android/Chromium and iPhone/WebKit devices with mocked
+Supabase responses. They cover session resume, draft fields and selected photos,
+restoring an expense after reload or relaunch, nested photo navigation, keyboard
+dismissal, notification links, missing expenses, and sign-out. No household data
+is written. Set `TEST_BASE_URL` to test another local server port. Native keyboard
+and operating-system gestures still need a physical-device smoke check.
+
 ## Cloud Setup
 
 Use:

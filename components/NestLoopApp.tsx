@@ -54,6 +54,8 @@ import {
 import { hasSupabaseConfig } from "../lib/supabase";
 import { Household, Person } from "../lib/household";
 import { BrandGlyph } from "./BrandGlyph";
+import { useAppLocation, type AppView } from "./useAppLocation";
+import { dismissModalKeyboard, useModalNavigation } from "./useModalNavigation";
 import {
   cancelOwnCashPayment as apiCancelOwnCashPayment,
   createExpense as apiCreateExpense,
@@ -108,7 +110,7 @@ import {
   type Settlement
 } from "../lib/api";
 
-type View = "home" | "expenses" | "tasks" | "calendar" | "people";
+type View = AppView;
 type SplitMode = "equal" | "custom";
 
 type NavItem = { view: View; label: string; icon: LucideIcon };
@@ -320,17 +322,36 @@ function useBodyScrollLock() {
  *  Si recibe onClose, tocar fuera de la hoja cierra el modal. */
 function ModalBackdrop({
   children,
-  onClose
+  onClose,
+  onBack
 }: {
   children: React.ReactNode;
   onClose?: () => void;
+  onBack?: () => void;
 }) {
   useBodyScrollLock();
+  useModalNavigation(onBack ?? onClose);
+  const backdropPress = useRef<{ x: number; y: number } | null>(null);
   return (
     <div
       className="modal-backdrop"
       role="presentation"
-      onClick={onClose ? (e) => { if (e.target === e.currentTarget) onClose(); } : undefined}
+      onPointerDown={(event) => {
+        backdropPress.current = null;
+        if (event.target !== event.currentTarget || !onClose) return;
+        if (dismissModalKeyboard()) {
+          event.preventDefault();
+          return;
+        }
+        backdropPress.current = { x: event.clientX, y: event.clientY };
+      }}
+      onClick={(event) => {
+        const press = backdropPress.current;
+        backdropPress.current = null;
+        if (event.target !== event.currentTarget || !press || !onClose) return;
+        if (Math.hypot(event.clientX - press.x, event.clientY - press.y) > 10) return;
+        if (!dismissModalKeyboard()) onClose();
+      }}
     >
       {children}
     </div>
@@ -1540,7 +1561,7 @@ function ExpenseForm({
   }
 
   return (
-    <ModalBackdrop>
+    <ModalBackdrop onBack={onClose}>
       <form className="modal-sheet expense-form" onSubmit={submit}>
         <div className="modal-header">
           <div>
@@ -1724,9 +1745,7 @@ function ExpenseDetail({
   const [confirmCancelCash, setConfirmCancelCash] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [viewingReceipt, setViewingReceipt] = useState(false);
-  const receiptHistoryPushedRef = useRef(false);
   const [viewingProof, setViewingProof] = useState<{ path: string; person: string } | null>(null);
-  const proofHistoryPushedRef = useRef(false);
 
   const payer = getPerson(expense.paidBy);
   const currentShare = expense.shares.find((share) => share.personId === currentUser.id);
@@ -1755,58 +1774,20 @@ function ExpenseDetail({
     (!bulkNeedsProof || !!bulkProofFile) &&
     !busy;
 
-  useEffect(() => {
-    if (!viewingReceipt) return;
-    const closeFromBack = () => {
-      receiptHistoryPushedRef.current = false;
-      setViewingReceipt(false);
-    };
-    window.addEventListener("popstate", closeFromBack);
-    return () => window.removeEventListener("popstate", closeFromBack);
-  }, [viewingReceipt]);
-
   function openReceiptViewer() {
     if (!expense.receiptPath) return;
     setViewingReceipt(true);
-    if (!receiptHistoryPushedRef.current) {
-      window.history.pushState({ nestloopReceiptViewer: expense.id }, "", window.location.href);
-      receiptHistoryPushedRef.current = true;
-    }
   }
 
   function closeReceiptViewer() {
-    if (receiptHistoryPushedRef.current && window.history.state?.nestloopReceiptViewer === expense.id) {
-      window.history.back();
-      return;
-    }
-    receiptHistoryPushedRef.current = false;
     setViewingReceipt(false);
   }
 
-  useEffect(() => {
-    if (!viewingProof) return;
-    const closeFromBack = () => {
-      proofHistoryPushedRef.current = false;
-      setViewingProof(null);
-    };
-    window.addEventListener("popstate", closeFromBack);
-    return () => window.removeEventListener("popstate", closeFromBack);
-  }, [viewingProof]);
-
   function openProofViewer(path: string, person: string) {
     setViewingProof({ path, person });
-    if (!proofHistoryPushedRef.current) {
-      window.history.pushState({ nestloopProofViewer: expense.id }, "", window.location.href);
-      proofHistoryPushedRef.current = true;
-    }
   }
 
   function closeProofViewer() {
-    if (proofHistoryPushedRef.current && window.history.state?.nestloopProofViewer === expense.id) {
-      window.history.back();
-      return;
-    }
-    proofHistoryPushedRef.current = false;
     setViewingProof(null);
   }
 
@@ -2288,7 +2269,7 @@ function RecurringBillForm({
   }
 
   return (
-    <ModalBackdrop>
+    <ModalBackdrop onBack={onClose}>
       <form className="modal-sheet expense-form" onSubmit={submit}>
         <div className="modal-header">
           <div>
@@ -2927,7 +2908,7 @@ function RotationForm({
   }
 
   return (
-    <ModalBackdrop>
+    <ModalBackdrop onBack={onClose}>
       <form className="modal-sheet schedule-form" onSubmit={submit}>
         <div className="modal-header">
           <div>
@@ -3118,7 +3099,7 @@ function ScheduleForm({
   }
 
   return (
-    <ModalBackdrop>
+    <ModalBackdrop onBack={onClose}>
       <form className="modal-sheet schedule-form" onSubmit={submit}>
         <div className="modal-header">
           <div>
@@ -3917,13 +3898,12 @@ export function NestLoopApp({
   household: Household;
   onSignOut: () => void;
 }) {
-  const [activeView, setActiveView] = useState<View>("home");
-  const [expensesTab, setExpensesTab] = useState<"expenses" | "balances" | "monthly">("expenses");
+  const { activeView, setActiveView, expensesTab, setExpensesTab, activeExpenseId, setActiveExpenseId } =
+    useAppLocation(household.id, currentUserId);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [recurringBills, setRecurringBills] = useState<RecurringBill[]>([]);
   const [rotations, setRotations] = useState<Rotation[]>([]);
   const [slots, setSlots] = useState<ScheduleSlot[]>([]);
-  const [activeExpenseId, setActiveExpenseId] = useState<string | null>(null);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
   const [showHelp, setShowHelp] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
@@ -4063,6 +4043,10 @@ export function NestLoopApp({
 
   const currentUser = appData.getPerson(currentUserId);
   const activeExpense = expenses.find((expense) => expense.id === activeExpenseId);
+
+  useEffect(() => {
+    if (!loading && !loadError && activeExpenseId && !activeExpense) setActiveExpenseId(null);
+  }, [activeExpense, activeExpenseId, loading, loadError, setActiveExpenseId]);
 
   const unreadNotificationIds = useMemo(() => {
     return new Set(
