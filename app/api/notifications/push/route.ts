@@ -33,9 +33,6 @@ async function isAuthorized(request: Request, cronSecret: string) {
   // Vercel Cron manda "Authorization: Bearer ${CRON_SECRET}" (esa env var exacta).
   const vercelCronSecret = process.env.CRON_SECRET;
   if (vercelCronSecret && authorization === `Bearer ${vercelCronSecret}`) return true;
-  // Cron de Vercel sin CRON_SECRET configurado: identificado por user-agent.
-  // Riesgo bajo: solo dispara el envío de notificaciones ya vencidas (idempotente).
-  if ((request.headers.get("user-agent") ?? "").startsWith("vercel-cron/")) return true;
   if (!authorization.startsWith("Bearer ")) return false;
 
   const supabase = getSupabaseServerClient(authorization);

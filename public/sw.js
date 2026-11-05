@@ -1,4 +1,4 @@
-const CACHE_NAME = "nestloop-v14";
+const CACHE_NAME = "nestloop-v15";
 // Clave pública VAPID (misma que usa la app; no es secreta).
 const VAPID_PUBLIC_KEY =
   "BBntLEaWDQo3twD1_7gzHDqo7ladR0E1f7EN07aYcDsAqJLdjoxTPCHbn3OVwPMP9HosQWEJ0C5gCVNVH16IxZo";
