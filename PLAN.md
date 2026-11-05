@@ -275,6 +275,16 @@ Auditoría completa del código de las fases 12–14 + arreglos (verificado: bui
 7. **Editar un turno conserva el orden original** de la rotación (antes se reordenaba según la lista de personas).
 8. **Ícono maskable regenerado con zona segura** (Android ya no recorta el dibujo en íconos circulares); `maximumScale` eliminado del viewport (accesibilidad: la familia puede hacer zoom); service worker a v10.
 
+### Fase 23 — Rediseño completo y pagos mensuales por persona (2026-11-05)
+
+Interfaz reconstruida desde cero (`app/globals.css` nuevo, tablero en `app/kiosk.css`, pantallas en `components/app/`). No hubo cambios en la base de datos.
+
+1. **Facturas por estado**: cada factura se agrupa según lo que le toca a quien la mira (`lib/expense-status.ts`) con un recibo de color y símbolo: rojo te toca pagar, ámbar por confirmar, verde ya pagaste y falta gente, azul completa, gris no participas. El número grande es tu parte, no el total.
+2. **Saldos**: netos por persona, agrupados en "Le debes a", "Te deben" y "A mano".
+3. **Mensual**: tarjeta compacta, hoja de detalle con comprobantes y meses anteriores, y "Cambiar monto" (reparte proporcionalmente; solo creador o admin).
+4. **Corrección**: un atraso de una persona ya no bloquea a las demás; cada quien paga su primer mes pendiente (`firstUnpaidPeriod`) y la tarjeta muestra el mes vigente (`billDisplayPeriod`). **Pendiente en la base de datos**: `recurring_active_period` (recordatorios) todavía usa el primer mes que no pagaron todos; hay que alinearlo con esta lógica.
+5. **Turnos**: filas compactas con botón "Hecho" y deshacer inmediato. **Agenda** (antes Horarios): semana con pagos, turnos y reservas; reservar varios días a la vez y aviso de choques.
+
 ---
 
 ## 5. Reglas de trabajo para el agente

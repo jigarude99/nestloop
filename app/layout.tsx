@@ -1,5 +1,9 @@
 import type { Metadata, Viewport } from "next";
+import { Figtree } from "next/font/google";
 import "./globals.css";
+import "./kiosk.css";
+
+const figtree = Figtree({ subsets: ["latin"], variable: "--font-sans", display: "swap" });
 
 export const metadata: Metadata = {
   title: "NestLoop",
@@ -27,7 +31,7 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  themeColor: "#f7f8f4"
+  themeColor: "#f4f3ee"
 };
 
 export default function RootLayout({
@@ -36,7 +40,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="es">
+    <html className={figtree.variable} lang="es">
       <body>{children}</body>
     </html>
   );

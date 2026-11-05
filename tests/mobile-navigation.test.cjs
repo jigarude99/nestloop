@@ -139,7 +139,6 @@ for (const [platform, browserType, device] of [
 
       await t.test("Back dismisses the focused keyboard before closing a form", () => fixture(browser, device, async ({ page }) => {
         await page.getByRole("button", { name: "Nuevo gasto", exact: true }).click();
-        await page.getByRole("button", { name: "Agregar gasto", exact: true }).click();
         const title = page.getByLabel("Título", { exact: true });
         await title.fill("Texto conservado");
         await page.goBack();
@@ -151,7 +150,6 @@ for (const [platform, browserType, device] of [
 
       await t.test("keyboard resize and a stray backdrop click preserve the form", () => fixture(browser, device, async ({ page }) => {
         await page.getByRole("button", { name: "Nuevo gasto", exact: true }).click();
-        await page.getByRole("button", { name: "Agregar gasto", exact: true }).click();
         const title = page.getByLabel("Título", { exact: true });
         await title.fill("Teclado cerrado");
         await page.evaluate(() => {
@@ -181,7 +179,7 @@ for (const [platform, browserType, device] of [
       }));
 
       await t.test("explicit notification links override the saved location", () => fixture(browser, device, async ({ page }) => {
-        await page.getByRole("navigation").getByRole("button", { name: "Horarios", exact: true }).click();
+        await page.getByRole("navigation").getByRole("button", { name: "Agenda", exact: true }).click();
         await page.goto(`${baseURL}/?view=expenses&expense=${expenseId}`);
         await page.locator(".detail-sheet").waitFor();
         assert.equal(new URL(page.url()).search, "");

@@ -44,6 +44,23 @@ npm run build
 npm audit --omit=dev
 ```
 
+## Code Map
+
+- `components/NestLoopApp.tsx`: app shell, data loading and actions.
+- `components/app/`: screens and shared UI (`core`, `home`, `expenses`, `monthly`, `turns`, `agenda`, `household`).
+- `lib/expense-status.ts`: which group and color each invoice gets for the person viewing it.
+- `lib/bill-periods.ts`: which month each monthly bill shows and which month each person pays next.
+
+## Automated Checks
+
+```bash
+npm run test:logic
+npm run test:flows
+```
+
+`test:logic` runs without a browser. `test:flows` needs the local server and uses mocked
+Supabase responses, so it never writes household data.
+
 ## Mobile Navigation Checks
 
 With the local server running and `.env.local` configured:

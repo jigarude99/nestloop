@@ -10,7 +10,9 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "test:mobile": "node --test tests/mobile-navigation.test.cjs"
+    "test:mobile": "node --test tests/mobile-navigation.test.cjs",
+    "test:logic": "node --test tests/expense-status.test.cjs tests/bill-periods.test.cjs",
+    "test:flows": "node --test tests/app-flows.test.cjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "2.108.1",
